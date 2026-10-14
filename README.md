@@ -49,8 +49,9 @@ cleanest way is to delete the old integration entry and add it again.
 | Scenes from the app | `scene` (activate) |
 
 Zigbee devices that report themselves offline are shown as unavailable. Every Zigbee device
-has an *Identify* button: the device blinks for about 3 seconds, which shows the hub can
-reach it.
+has an *Identify* button (it sends the same identify message as the app): the device blinks
+for about 3 seconds, which shows the hub can reach it. Battery-powered sensors sleep most
+of the time and may react late or not at all.
 
 ## Testing alarms and the doorbell
 

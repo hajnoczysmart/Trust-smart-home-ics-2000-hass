@@ -218,6 +218,7 @@ class ButtonSpec:
     channel: int | None = None
     enabled_default: bool = True
     device_class: str | None = None  # e.g. "identify"
+    action: str = "control"  # "control": entity action; "identify": hub identify message
 
 
 @dataclass(frozen=True)
@@ -311,6 +312,11 @@ class TrustDevice:
     @property
     def ias_zone_type(self) -> int:
         return self.info_word(14)
+
+    @property
+    def short_id(self) -> int:
+        """ZigbeeDevice.getShortId(): the device's Zigbee network address."""
+        return self.info_word(0)
 
 
 def parse_sync(rows: list[dict[str, Any]]) -> list[TrustDevice]:
@@ -505,9 +511,10 @@ def describe(dev: TrustDevice) -> Description:
         ]
     else:
         d.supported = False
-    if t in ZIGBEE_TYPES and dev.kind == "module":
-        # ZigbeeDevice.identify(): index 1 = 3, the device blinks for ~3 seconds
-        d.buttons.append(ButtonSpec("identify", 1, 3, device_class="identify"))
+    if t in ZIGBEE_TYPES and dev.kind == "module" and dev.short_id:
+        # The app identifies with a separate hub message (MessageFactory.identify:
+        # type IDENTIFY_ZIGBEE, {"short id", "duration": 3}), not an entity action.
+        d.buttons.append(ButtonSpec("identify", 0, 3, device_class="identify", action="identify"))
     return d
 
 
