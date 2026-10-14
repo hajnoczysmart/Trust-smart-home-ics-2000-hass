@@ -278,6 +278,7 @@ class TrustDevice:
     info: list[int]
     hidden: bool
     description: Description = field(default_factory=Description)
+    members: list[int] = field(default_factory=list)  # group member module ids
 
     @property
     def type_name(self) -> str:
@@ -336,6 +337,8 @@ def parse_sync(rows: list[dict[str, Any]]) -> list[TrustDevice]:
             info=[int(v) for v in info] if isinstance(info, list) else [0] * 16,
             hidden=bool(smd.get("hidden", False)),
         )
+        if kind == "group" and isinstance(body.get("modules"), list):
+            dev.members = [int(m) for m in body["modules"] if str(m).lstrip("-").isdigit()]
         # The app only shows paired modules; virtual modules are always paired.
         if kind == "module" and not dev.is_paired and dev.device_type not in VIRTUAL_TYPES:
             continue
@@ -507,6 +510,52 @@ def status_value(status: list[int] | None, index: int | None) -> int | None:
         return int(status[index])
     except (IndexError, TypeError, ValueError):
         return None
+
+
+def group_state_indexes(desc: Description) -> tuple[int | None, list[int]]:
+    """(on/off index, other indexes) a group derives from its members."""
+    if desc.light is not None:
+        spec = desc.light
+        others = [i for i in (spec.dim_index, spec.hs_index, spec.ct_index, spec.pointer_index) if i is not None]
+        return spec.on_index, others
+    if desc.switch is not None:
+        return desc.switch.index, []
+    return None, []
+
+
+def derive_group_status(
+    own: list[int] | None, members: list[list[int] | None], desc: Description
+) -> list[int] | None:
+    """Group state computed from its members, like the app does.
+
+    The hub does not reliably update a group's own status, but it does update
+    the members it switched. On = any member on; level = average of the members
+    that are on; colour values from the first member that is on.
+    """
+    on_index, others = group_state_indexes(desc)
+    statuses = [m for m in members if m]
+    if on_index is None or not statuses:
+        return own
+    result = list(own or [])
+    needed = max([on_index, *others]) + 1
+    if len(result) < needed:
+        result.extend([0] * (needed - len(result)))
+    known = [v for v in (status_value(m, on_index) for m in statuses) if v is not None]
+    if not known:
+        return own
+    result[on_index] = 1 if any(v == 1 for v in known) else 0
+    lit = [m for m in statuses if status_value(m, on_index) == 1] or statuses
+    light = desc.light
+    for index in others:
+        values = [v for v in (status_value(m, index) for m in lit) if v is not None]
+        if not values:
+            continue
+        if light is not None and index == light.dim_index:
+            positive = [v for v in values if v > 0] or values
+            result[index] = round(sum(positive) / len(positive))
+        else:
+            result[index] = values[0]
+    return result
 
 
 def brightness_to_level(brightness: int, spec: LightSpec) -> int:

@@ -13,8 +13,14 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import TrustApiError, TrustAuthError, TrustClient
-from .catalog import TrustDevice
-from .const import CONF_MAPPINGS, DOMAIN, REFRESH_AFTER_COMMAND, SCAN_INTERVAL
+from .catalog import TrustDevice, derive_group_status
+from .const import (
+    CONF_MAPPINGS,
+    DOMAIN,
+    HOLD_AFTER_COMMAND,
+    REFRESH_AFTER_COMMAND,
+    SCAN_INTERVAL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +49,9 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         # (entity id, index) -> (value sent, expiry): event entities do not report
         # the change our own command causes
         self.own_changes: dict[tuple[int, int], tuple[int, float]] = {}
+        # (entity id, index) -> (value sent, expiry): keep showing what we sent
+        # until the cloud confirms it, instead of jumping back to a stale value
+        self._pending: dict[tuple[int, int], tuple[int, float]] = {}
 
     def is_own_change(self, entity_id: int, index: int, value: int) -> bool:
         """True (once) if this value change was caused by our own command."""
@@ -87,8 +96,41 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             raise ConfigEntryAuthFailed from err
         except TrustApiError as err:
             raise UpdateFailed(str(err)) from err
-        self._statuses.update(fresh)
-        return dict(self._statuses)
+        self._statuses.update({k: list(v) for k, v in fresh.items()})
+        self._apply_pending(fresh)
+        return self._compose()
+
+    def _apply_pending(self, fresh: dict[int, list[int]]) -> None:
+        """Re-apply values we sent until the cloud reports them (or they expire)."""
+        now = time.monotonic()
+        for (eid, index), (value, expiry) in list(self._pending.items()):
+            reported = fresh.get(eid)
+            confirmed = reported is not None and index < len(reported) and reported[index] == value
+            if now >= expiry or confirmed:
+                del self._pending[(eid, index)]
+            elif eid in self._statuses:
+                self._write(eid, index, value)
+
+    def _write(self, eid: int, index: int, value: int) -> None:
+        status = list(self._statuses.get(eid, []))
+        if len(status) <= index:
+            status.extend([0] * (index + 1 - len(status)))
+        status[index] = value
+        self._statuses[eid] = status
+
+    def _compose(self) -> dict[int, list[int]]:
+        """Statuses as entities see them; groups are derived from their members."""
+        data = dict(self._statuses)
+        for dev in self.devices.values():
+            if dev.kind == "group" and dev.members:
+                derived = derive_group_status(
+                    self._statuses.get(dev.id),
+                    [self._statuses.get(m) for m in dev.members],
+                    dev.description,
+                )
+                if derived is not None:
+                    data[dev.id] = derived
+        return data
 
     # ---- commands --------------------------------------------------------
 
@@ -105,12 +147,15 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # what we sent so the resulting change is not reported as a press.
             self.own_changes[(device.id, index)] = (int(value), time.monotonic() + 30)
         elif device.kind != "scene":
-            status = list(self._statuses.get(device.id, []))
-            if len(status) <= index:
-                status.extend([0] * (index + 1 - len(status)))
-            status[index] = int(value)
-            self._statuses[device.id] = status
-            self.async_set_updated_data(dict(self._statuses))
+            # A group command also sets its members (update_group_members=true);
+            # a group with known members is derived from them, so hold those.
+            held = device.members if (device.kind == "group" and device.members) else [device.id]
+            expiry = time.monotonic() + HOLD_AFTER_COMMAND
+            self._write(device.id, index, int(value))
+            for eid in held:
+                self._write(eid, index, int(value))
+                self._pending[(eid, index)] = (int(value), expiry)
+            self.async_set_updated_data(self._compose())
         self._schedule_refresh()
 
     @callback
