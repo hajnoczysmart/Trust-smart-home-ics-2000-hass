@@ -37,6 +37,11 @@ def scan_interval(entry: ConfigEntry) -> timedelta:
     return timedelta(seconds=max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, seconds)))
 
 
+def _is_dim_index(dev: TrustDevice, index: int) -> bool:
+    light = dev.description.light
+    return light is not None and index == light.dim_index
+
+
 class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     """Polls the status lists of all devices and groups of one home."""
 
@@ -160,11 +165,22 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             if index == on_index:
                 states = [status_value(self._statuses.get(m), on_index) for m in dev.members]
                 self._write(dev.id, index, 1 if any(s == 1 for s in states) else 0)
-            else:
-                # dim/colour: take the value of the member that just changed
+            elif len(movers) == 1 or not _is_dim_index(dev, index):
+                # one member changed: the group takes its value (colour: the last one)
                 value = status_value(self._statuses.get(movers[-1]), index)
                 if value is not None:
                     self._write(dev.id, index, value)
+            else:
+                # several members changed at once: same rule as at start-up
+                # (average of the lit members), so the result does not depend on
+                # the order in which the cloud reports them
+                derived = derive_group_status(
+                    self._statuses.get(dev.id),
+                    [self._statuses.get(m) for m in dev.members],
+                    dev.description,
+                )
+                if derived is not None and status_value(derived, index) is not None:
+                    self._write(dev.id, index, derived[index])
 
     def _write(self, eid: int, index: int, value: int) -> None:
         status = list(self._statuses.get(eid, []))

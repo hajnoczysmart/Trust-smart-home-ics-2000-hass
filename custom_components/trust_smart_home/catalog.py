@@ -340,6 +340,18 @@ def parse_sync(rows: list[dict[str, Any]]) -> list[TrustDevice]:
             dev = None
         if dev is not None:
             out.append(dev)
+    # Groups: colour, colour temperature and dim support come from the members
+    modules = {d.id: d for d in out if d.kind == "module"}
+    for dev in out:
+        if dev.kind != "group" or not dev.members:
+            continue
+        fns: set[int] = set()
+        for member_id in dev.members:
+            member = modules.get(member_id)
+            if member is not None:
+                fns |= member.zigbee_functions
+        if fns:
+            dev.description = describe(dev, fns)
     return out
 
 
@@ -395,8 +407,8 @@ def _parse_row(row: dict[str, Any]) -> TrustDevice | None:
 # ---------------------------------------------------------------------------
 
 
-def _zigbee_light(dev: TrustDevice) -> LightSpec:
-    fns = dev.zigbee_functions
+def _zigbee_light(dev: TrustDevice, functions: set[int] | None = None) -> LightSpec:
+    fns = dev.zigbee_functions if functions is None else functions
     if fns <= {0, 1, 2}:  # empty mask (e.g. a group) -> assume dimmable
         fns = {0, 1, 2, 3, 4}
     return LightSpec(
@@ -446,7 +458,7 @@ def _remote(channels: int, desc: Description) -> None:
     desc.events.append(EventSpec("buttons", tuple(range(channels)), ((1, "on"), (0, "off"))))
 
 
-def describe(dev: TrustDevice) -> Description:
+def describe(dev: TrustDevice, member_functions: set[int] | None = None) -> Description:
     d = Description()
     t = dev.device_type
 
@@ -528,7 +540,9 @@ def describe(dev: TrustDevice) -> Description:
     elif t in ZB_DIMMER:
         d.light = LightSpec(on_index=3, dim_index=4, dim_min=1, dim_max=254)
     elif t in ZB_LIGHT:
-        d.light = _zigbee_light(dev)
+        # A group has no function mask of its own: its capabilities are the
+        # members' (parse_sync passes them in).
+        d.light = _zigbee_light(dev, member_functions if dev.kind == "group" else None)
     elif t in ZB_SENSOR:
         _zigbee_sensor(dev, d)
     elif t == SECURITY_MODULE:
