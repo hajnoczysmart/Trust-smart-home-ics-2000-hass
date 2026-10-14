@@ -21,6 +21,17 @@ class TrustEntity(CoordinatorEntity[TrustCoordinator]):
         self.trust = device
         base = f"{coordinator.home_id}_{device.id}"
         self._attr_unique_id = f"{base}_{key}" if key else base
+        if device.kind == "scenario":
+            # App rules are collected on one "Rules" device, named after the rule.
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{coordinator.home_id}_rules")},
+                name="Rules",
+                manufacturer=MANUFACTURER,
+                model="Trust Smart Home app rules",
+            )
+            if key is None:
+                self._attr_name = device.name
+            return
         if key is None:
             self._attr_name = None  # use the device name
         self._attr_device_info = DeviceInfo(

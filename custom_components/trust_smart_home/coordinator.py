@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,9 +15,26 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import TrustApiError, TrustAuthError, TrustClient
 from .catalog import TrustDevice, derive_group_status, group_state_indexes, status_value
-from .const import CONF_MAPPINGS, DOMAIN, REFRESH_AFTER_COMMAND, SCAN_INTERVAL
+from .const import (
+    CONF_MAPPINGS,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    REFRESH_AFTER_COMMAND,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def scan_interval(entry: ConfigEntry) -> timedelta:
+    """Polling interval from the options (default 3 s)."""
+    try:
+        seconds = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    except (TypeError, ValueError):
+        seconds = DEFAULT_SCAN_INTERVAL
+    return timedelta(seconds=max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, seconds)))
 
 
 class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
@@ -34,7 +52,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=SCAN_INTERVAL,
+            update_interval=scan_interval(entry),
         )
         self.client = client
         self.devices: dict[int, TrustDevice] = {d.id: d for d in devices}
@@ -81,7 +99,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         return (self.data or {}).get(entity_id)
 
     def _poll_ids(self) -> list[int]:
-        return [d.id for d in self.devices.values() if d.kind in ("module", "group")]
+        return [d.id for d in self.devices.values() if d.kind in ("module", "group", "scenario")]
 
     async def _async_update_data(self) -> dict[int, list[int]]:
         try:

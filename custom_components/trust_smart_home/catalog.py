@@ -162,6 +162,12 @@ SECURITY_STATES = {
 SCENE_PLAYBACK_INDEX = 0
 SCENE_PLAY = 1
 
+# App rules ("scenario"): Rule.INDEX_ENABLE_DISABLE and its values
+RULE_INDEX = 0
+RULE_DISABLED = 0
+RULE_ENABLED = 1
+RULE_PLAY = 2
+
 # Brel: toValue(LONG_PRESS=2, channel 1) = (1 << 16) | 2
 BREL_PRESS = (1 << 16) | 2
 
@@ -260,6 +266,7 @@ class Description:
     cover: CoverSpec | None = None
     alarm: bool = False
     scene: bool = False
+    rule: bool = False
     binary_sensors: list[BinarySpec] = field(default_factory=list)
     sensors: list[SensorSpec] = field(default_factory=list)
     buttons: list[ButtonSpec] = field(default_factory=list)
@@ -276,7 +283,7 @@ class Description:
 @dataclass
 class TrustDevice:
     id: int
-    kind: str  # module, group or scene
+    kind: str  # module, group, scene or scenario (an app rule)
     name: str
     device_type: int | None
     info: list[int]
@@ -288,6 +295,8 @@ class TrustDevice:
     def type_name(self) -> str:
         if self.kind == "scene":
             return "Scene"
+        if self.kind == "scenario":
+            return "Rule"
         if self.device_type is None:
             return "Group" if self.kind == "group" else "Unknown"
         return DEVICE_TYPE_NAMES.get(self.device_type, f"Type {self.device_type}")
@@ -345,7 +354,7 @@ def _parse_row(row: dict[str, Any]) -> TrustDevice | None:
     data = row.get("data") or {}
     if not isinstance(data, dict):
         return None
-    for kind in ("module", "group", "scene"):
+    for kind in ("module", "group", "scene", "scenario"):
         body = data.get(kind)
         if isinstance(body, dict):
             break
@@ -373,8 +382,8 @@ def _parse_row(row: dict[str, Any]) -> TrustDevice | None:
     # The app only shows paired modules; virtual modules are always paired.
     if kind == "module" and not dev.is_paired and dev.device_type not in VIRTUAL_TYPES:
         return None
-    if kind == "scene" and dev.hidden:
-        return None  # internal scenes, e.g. the security walkout scene
+    if kind in ("scene", "scenario") and dev.hidden:
+        return None  # internal scenes/rules, e.g. those of the security system
     if dev.device_type in IGNORED_TYPES:
         return None
     dev.description = describe(dev)
@@ -443,6 +452,10 @@ def describe(dev: TrustDevice) -> Description:
 
     if dev.kind == "scene":
         d.scene = True
+        return d
+    if dev.kind == "scenario":
+        d.rule = True
+        d.buttons.append(ButtonSpec("run", RULE_INDEX, RULE_PLAY))
         return d
 
     if t in ZIGBEE_TYPES and dev.kind == "module":

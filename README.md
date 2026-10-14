@@ -47,6 +47,7 @@ cleanest way is to delete the old integration entry and add it again.
 | ICS-2000 alarm system (240) | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
 | P1 energy module (238) | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
+| Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
 
 Zigbee devices that report themselves offline are shown as unavailable. Mains-powered Zigbee devices (bulbs, plugs, built-in
 switches and dimmers) have an *Identify* button: the device blinks for about 3 seconds,
@@ -60,7 +61,7 @@ sleep most of the time and ignore it, so they have no such button.
   the real alarm; the app has no command to stop it, so the siren sounds for its configured
   duration. It is disabled by default (enable it in the entity settings if you need it).
 - **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a
-  test either). The detector sounds, and within about 5 seconds its *Smoke* sensor in Home
+  test either). The detector sounds, and within a few seconds its *Smoke* sensor in Home
   Assistant turns on, which tests the whole chain.
 
 The cloud often keeps returning the old value for a while after a command (especially
@@ -84,14 +85,36 @@ This gives three things:
   were paired directly with the remote can be switched too. For the 16-channel remote these
   are disabled by default (enable them in the entity settings).
 
-**Limitation:** the hub does not push updates; the integration polls every 5 seconds. Pressing
+**Limitation:** the hub does not push updates; the integration polls (every 3 seconds by default). Pressing
 the same button twice, or on and off quickly on the same channel, cannot be seen, and an
-event may arrive up to 5 seconds late. Changes caused by the integration's own buttons are
+event may arrive up to one polling interval late. Changes caused by the integration's own buttons are
 not reported as button presses.
+
+## Rules from the app
+
+Rules (automations) created in the Trust Smart Home app appear on a *Rules* device:
+
+- a **switch** per rule enables or disables it, like the toggle in the app;
+- a **Run** button executes the rule's actions immediately.
+
+Internal rules of the security system are hidden, as in the app.
+
+## Settings
+
+Configure → *Settings*: the status polling interval (1–60 seconds, default 3). Lower values
+make state changes and button-press events show up faster, at the cost of more requests to
+the Trust cloud.
+
+## Diagnostics
+
+Settings → Devices & services → Trust Smart Home → ⋮ → *Download diagnostics* gives a file
+with the device list, device types and current status values, useful for reporting
+problems or new device types. E-mail, password, hub key, MAC, home ID and hub address are
+removed.
 
 ## Extra sensor for any device
 
-Configure → pick a device → expose one position of its raw status list as a binary or
+Configure → *Extra sensor for a device* → pick a device → expose one position of its raw status list as a binary or
 numeric sensor. Trigger the device, reopen the dialog, and you will see which number changed.
 
 ## Not supported

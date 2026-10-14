@@ -1,5 +1,4 @@
 """Constants for the Trust Smart Home (ICS-2000) integration."""
-from datetime import timedelta
 
 DOMAIN = "trust_smart_home"
 MANUFACTURER = "Trust / KlikAanKlikUit"
@@ -13,7 +12,10 @@ ROLE_NONE = "none"
 ROLE_BINARY_SENSOR = "binary_sensor"
 ROLE_SENSOR = "sensor"
 
-SCAN_INTERVAL = timedelta(seconds=5)
+CONF_SCAN_INTERVAL = "scan_interval"  # seconds between status polls
+DEFAULT_SCAN_INTERVAL = 3
+MIN_SCAN_INTERVAL = 1
+MAX_SCAN_INTERVAL = 60
 REFRESH_AFTER_COMMAND = 2.0  # seconds
 
 PLATFORMS = [

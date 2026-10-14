@@ -38,13 +38,6 @@
   },
   "options": {
     "step": {
-      "init": {
-        "title": "Extra sensor for a device",
-        "description": "Expose a raw status position of any device as an extra sensor. Devices marked with * already have one.",
-        "data": {
-          "device": "Device"
-        }
-      },
       "map_device": {
         "title": "Extra sensor for {name}",
         "description": "Current raw status list: {status}\n\nTrigger the device and reopen this dialog to see which position (counted from 0) changes.",
@@ -53,6 +46,27 @@
           "index": "Status position (0-based)",
           "active_value": "Value meaning on (binary sensor)",
           "device_class": "Device class (binary sensor)"
+        }
+      },
+      "pick_device": {
+        "title": "Extra sensor for a device",
+        "description": "Expose a raw status position of any device as an extra sensor. Devices marked with * already have one.",
+        "data": {
+          "device": "Device"
+        }
+      },
+      "init": {
+        "title": "Trust Smart Home",
+        "menu_options": {
+          "settings": "Settings",
+          "pick_device": "Extra sensor for a device"
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "description": "How often device states are read from the Trust cloud. Default: 3 seconds.",
+        "data": {
+          "scan_interval": "Status polling interval (seconds)"
         }
       }
     },
@@ -93,6 +107,9 @@
       },
       "siren_alarm": {
         "name": "Sound alarm"
+      },
+      "rule_run": {
+        "name": "Run {name}"
       }
     },
     "sensor": {

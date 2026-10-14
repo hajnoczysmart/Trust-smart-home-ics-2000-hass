@@ -28,7 +28,7 @@ LOCAL_PORT = 2012
 FRAME_MAGIC = 653213
 # MessageType value from the app
 MSG_CONTROL_ENTITY = 128
-ENTITY_KINDS = ("module", "group", "scene")
+ENTITY_KINDS = ("module", "group", "scene", "scenario")  # scenario = app rule
 
 
 class TrustApiError(Exception):

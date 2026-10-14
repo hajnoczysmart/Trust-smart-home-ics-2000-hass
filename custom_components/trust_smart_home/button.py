@@ -35,6 +35,9 @@ class TrustButton(TrustEntity, ButtonEntity):
         if spec.device_class:
             self._attr_device_class = ButtonDeviceClass(spec.device_class)
             self._attr_entity_category = EntityCategory.CONFIG
+        elif device.kind == "scenario":
+            self._attr_translation_key = "rule_run"
+            self._attr_translation_placeholders = {"name": device.name}
         elif spec.channel is not None:
             self._attr_translation_key = "channel_on" if spec.value == 1 else "channel_off"
             self._attr_translation_placeholders = {"channel": str(spec.channel)}

@@ -23,7 +23,11 @@ from .const import (
     BINARY_DEVICE_CLASSES,
     CONF_HOME,
     CONF_MAPPINGS,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
     ROLE_BINARY_SENSOR,
     ROLE_NONE,
     ROLE_SENSOR,
@@ -165,6 +169,30 @@ class TrustOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["settings", "pick_device"])
+
+    async def async_step_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                title="", data={**self.config_entry.options, **user_input}
+            )
+        current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        return self.async_show_form(
+            step_id="settings",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
+                    )
+                }
+            ),
+        )
+
+    async def async_step_pick_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         coordinator = self._coordinator()
         if coordinator is None or not coordinator.devices:
             return self.async_abort(reason="not_loaded")
@@ -175,10 +203,10 @@ class TrustOptionsFlow(OptionsFlow):
         choices = {
             str(dev.id): f"{dev.name} [{dev.type_name}]" + (" *" if str(dev.id) in mapped else "")
             for dev in sorted(coordinator.devices.values(), key=lambda d: d.name.lower())
-            if dev.kind != "scene"
+            if dev.kind in ("module", "group")
         }
         return self.async_show_form(
-            step_id="init",
+            step_id="pick_device",
             data_schema=vol.Schema({vol.Required("device"): vol.In(choices)}),
         )
 
