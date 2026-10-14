@@ -1,0 +1,13 @@
+{
+  "domain": "trust_smart_home",
+  "name": "Trust Smart Home (ICS-2000)",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/hajnoczysmart/Trust-smart-home-ics-2000-hass",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/hajnoczysmart/Trust-smart-home-ics-2000-hass/issues",
+  "loggers": ["custom_components.trust_smart_home"],
+  "requirements": [],
+  "version": "1.1.0"
+}

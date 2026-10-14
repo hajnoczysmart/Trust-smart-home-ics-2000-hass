@@ -1,0 +1,139 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Trust Smart Home",
+        "description": "Sign in with your Trust Smart Home / ICS-2000 account. Optionally enter the hub's IP address to send commands over your local network (falls back to the cloud).",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "ip_address": "ICS-2000 IP address (optional)"
+        }
+      },
+      "home": {
+        "title": "Choose a home",
+        "data": {
+          "home": "Home"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "Enter the current password for {email}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot reach the Trust cloud",
+      "no_homes": "This account has no homes",
+      "unknown": "Unexpected error, see the log"
+    },
+    "abort": {
+      "already_configured": "This home is already configured",
+      "reauth_successful": "Signed in again"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Extra sensor for a device",
+        "description": "Expose a raw status position of any device as an extra sensor. Devices marked with * already have one.",
+        "data": {
+          "device": "Device"
+        }
+      },
+      "map_device": {
+        "title": "Extra sensor for {name}",
+        "description": "Current raw status list: {status}\n\nTrigger the device and reopen this dialog to see which position (counted from 0) changes.",
+        "data": {
+          "role": "Expose as",
+          "index": "Status position (0-based)",
+          "active_value": "Value meaning on (binary sensor)",
+          "device_class": "Device class (binary sensor)"
+        }
+      }
+    },
+    "abort": {
+      "not_loaded": "The integration is not loaded yet, try again in a moment"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "dusk": {
+        "name": "Dusk"
+      },
+      "pressed": {
+        "name": "Pressed"
+      },
+      "siren_active": {
+        "name": "Siren"
+      },
+      "mapped": {
+        "name": "Mapped sensor"
+      },
+      "channel": {
+        "name": "Channel {channel}"
+      }
+    },
+    "button": {
+      "ring": {
+        "name": "Ring"
+      },
+      "channel_on": {
+        "name": "Channel {channel} on"
+      },
+      "channel_off": {
+        "name": "Channel {channel} off"
+      }
+    },
+    "sensor": {
+      "power_consumed": {
+        "name": "Power consumption"
+      },
+      "power_produced": {
+        "name": "Power production"
+      },
+      "energy_consumed_low": {
+        "name": "Energy consumed (low tariff)"
+      },
+      "energy_consumed_high": {
+        "name": "Energy consumed (high tariff)"
+      },
+      "energy_produced_low": {
+        "name": "Energy produced (low tariff)"
+      },
+      "energy_produced_high": {
+        "name": "Energy produced (high tariff)"
+      },
+      "gas_consumed": {
+        "name": "Gas consumed"
+      },
+      "water_consumed": {
+        "name": "Water consumed"
+      },
+      "raw_status": {
+        "name": "Raw status"
+      },
+      "mapped": {
+        "name": "Mapped sensor"
+      },
+      "tariff": {
+        "name": "Tariff",
+        "state": {
+          "low": "Low",
+          "high": "High"
+        }
+      }
+    },
+    "event": {
+      "buttons": {
+        "name": "Button press"
+      },
+      "arm_disarm": {
+        "name": "Arm / disarm"
+      }
+    }
+  }
+}
