@@ -13,14 +13,8 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import TrustApiError, TrustAuthError, TrustClient
-from .catalog import TrustDevice, derive_group_status
-from .const import (
-    CONF_MAPPINGS,
-    DOMAIN,
-    HOLD_AFTER_COMMAND,
-    REFRESH_AFTER_COMMAND,
-    SCAN_INTERVAL,
-)
+from .catalog import TrustDevice, derive_group_status, group_state_indexes, status_value
+from .const import CONF_MAPPINGS, DOMAIN, REFRESH_AFTER_COMMAND, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,14 +38,16 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         )
         self.client = client
         self.devices: dict[int, TrustDevice] = {d.id: d for d in devices}
+        # What entities see. A value only changes here when we send a command or
+        # when the cloud reports a *change*: the cloud often keeps returning an
+        # old value after a command (especially for groups and their members),
+        # and an unchanged stale value must not overwrite what we just set.
         self._statuses: dict[int, list[int]] = {}
+        self._reported: dict[int, list[int]] = {}  # last values from the cloud
         self._cancel_refresh: Any = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
         # the change our own command causes
         self.own_changes: dict[tuple[int, int], tuple[int, float]] = {}
-        # (entity id, index) -> (value sent, expiry): keep showing what we sent
-        # until the cloud confirms it, instead of jumping back to a stale value
-        self._pending: dict[tuple[int, int], tuple[int, float]] = {}
 
     def is_own_change(self, entity_id: int, index: int, value: int) -> bool:
         """True (once) if this value change was caused by our own command."""
@@ -96,20 +92,61 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             raise ConfigEntryAuthFailed from err
         except TrustApiError as err:
             raise UpdateFailed(str(err)) from err
-        self._statuses.update({k: list(v) for k, v in fresh.items()})
-        self._apply_pending(fresh)
-        return self._compose()
+        self._merge(fresh)
+        return {k: list(v) for k, v in self._statuses.items()}
 
-    def _apply_pending(self, fresh: dict[int, list[int]]) -> None:
-        """Re-apply values we sent until the cloud reports them (or they expire)."""
-        now = time.monotonic()
-        for (eid, index), (value, expiry) in list(self._pending.items()):
-            reported = fresh.get(eid)
-            confirmed = reported is not None and index < len(reported) and reported[index] == value
-            if now >= expiry or confirmed:
-                del self._pending[(eid, index)]
-            elif eid in self._statuses:
-                self._write(eid, index, value)
+    def _merge(self, fresh: dict[int, list[int]]) -> None:
+        """Apply what the cloud reports, but only the values that changed."""
+        changed: set[tuple[int, int]] = set()
+        first: set[int] = set()
+        for eid, new in fresh.items():
+            new = [int(v) for v in new]
+            old = self._reported.get(eid)
+            shown = self._statuses.get(eid)
+            if old is None or shown is None:
+                self._statuses[eid] = list(new)
+                first.add(eid)
+            else:
+                shown = list(shown)
+                for i, value in enumerate(new):
+                    if i >= len(old) or value != old[i]:
+                        if i >= len(shown):
+                            shown.extend([0] * (i + 1 - len(shown)))
+                        shown[i] = value
+                        changed.add((eid, i))
+                self._statuses[eid] = shown
+            self._reported[eid] = new
+        for dev in self.devices.values():
+            if dev.kind == "group" and dev.members:
+                self._merge_group(dev, changed, first)
+
+    def _merge_group(self, dev: TrustDevice, changed: set[tuple[int, int]], first: set[int]) -> None:
+        """A group follows its members: the hub does not keep the group's own
+        status up to date, but members report what they really did."""
+        on_index, others = group_state_indexes(dev.description)
+        if on_index is None:
+            return
+        if dev.id in first or dev.id not in self._statuses:
+            derived = derive_group_status(
+                self._statuses.get(dev.id),
+                [self._statuses.get(m) for m in dev.members],
+                dev.description,
+            )
+            if derived is not None:
+                self._statuses[dev.id] = derived
+            return
+        for index in [on_index, *others]:
+            movers = [m for m in dev.members if (m, index) in changed]
+            if not movers:
+                continue
+            if index == on_index:
+                states = [status_value(self._statuses.get(m), on_index) for m in dev.members]
+                self._write(dev.id, index, 1 if any(s == 1 for s in states) else 0)
+            else:
+                # dim/colour: take the value of the member that just changed
+                value = status_value(self._statuses.get(movers[-1]), index)
+                if value is not None:
+                    self._write(dev.id, index, value)
 
     def _write(self, eid: int, index: int, value: int) -> None:
         status = list(self._statuses.get(eid, []))
@@ -117,20 +154,6 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             status.extend([0] * (index + 1 - len(status)))
         status[index] = value
         self._statuses[eid] = status
-
-    def _compose(self) -> dict[int, list[int]]:
-        """Statuses as entities see them; groups are derived from their members."""
-        data = dict(self._statuses)
-        for dev in self.devices.values():
-            if dev.kind == "group" and dev.members:
-                derived = derive_group_status(
-                    self._statuses.get(dev.id),
-                    [self._statuses.get(m) for m in dev.members],
-                    dev.description,
-                )
-                if derived is not None:
-                    data[dev.id] = derived
-        return data
 
     # ---- commands --------------------------------------------------------
 
@@ -147,15 +170,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # what we sent so the resulting change is not reported as a press.
             self.own_changes[(device.id, index)] = (int(value), time.monotonic() + 30)
         elif device.kind != "scene":
-            # A group command also sets its members (update_group_members=true);
-            # a group with known members is derived from them, so hold those.
-            held = device.members if (device.kind == "group" and device.members) else [device.id]
-            expiry = time.monotonic() + HOLD_AFTER_COMMAND
-            self._write(device.id, index, int(value))
-            for eid in held:
+            # A group command also sets its members (update_group_members=true).
+            targets = [device.id, *device.members] if device.kind == "group" else [device.id]
+            for eid in targets:
                 self._write(eid, index, int(value))
-                self._pending[(eid, index)] = (int(value), expiry)
-            self.async_set_updated_data(self._compose())
+            self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
 
     @callback

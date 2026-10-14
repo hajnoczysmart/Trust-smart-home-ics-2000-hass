@@ -49,8 +49,10 @@ cleanest way is to delete the old integration entry and add it again.
 
 Zigbee devices that report themselves offline are shown as unavailable.
 
-After a command, the new state is kept for up to 15 seconds even if the cloud still
-returns the old one; after that, the state reported by the cloud wins.
+The cloud often keeps returning the old value for a while after a command (especially
+for groups and their members). The integration therefore only takes over a value from the
+cloud when it actually changes: a stale, unchanged value never overwrites what you just
+set, while changes made elsewhere (for example in the app) still show up.
 
 Every device also has a *Raw status* diagnostic sensor showing its full status list. It is
 enabled by default only for devices without dedicated support (lock, Zigbee Light Link

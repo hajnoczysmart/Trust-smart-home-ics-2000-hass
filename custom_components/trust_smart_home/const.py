@@ -15,7 +15,6 @@ ROLE_SENSOR = "sensor"
 
 SCAN_INTERVAL = timedelta(seconds=5)
 REFRESH_AFTER_COMMAND = 2.0  # seconds
-HOLD_AFTER_COMMAND = 15.0  # keep a sent value this long unless the cloud confirms it
 
 PLATFORMS = [
     "alarm_control_panel",
