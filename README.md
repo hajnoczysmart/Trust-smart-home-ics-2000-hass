@@ -93,7 +93,10 @@ numeric sensor. Trigger the device, reopen the dialog, and you will see which nu
 
 ## Testing
 
-What has been verified without a real hub:
+Tested with Home Assistant on a real ICS-2000 hub. Not every device type listed above has
+been tried on hardware yet; reports for other devices are welcome.
+
+In addition, automated checks verify that:
 
 - the command frame and encryption are byte-identical to the working `ics_2000_python`
   library in 200 random cases;
