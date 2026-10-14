@@ -47,5 +47,5 @@ class TrustEntity(CoordinatorEntity[TrustCoordinator]):
             return False  # Zigbee device reports itself offline
         return True
 
-    async def send(self, index: int, value: int) -> None:
-        await self.coordinator.async_send(self.trust, index, value)
+    async def send(self, index: int, value: int, optimistic: bool = True) -> None:
+        await self.coordinator.async_send(self.trust, index, value, optimistic)

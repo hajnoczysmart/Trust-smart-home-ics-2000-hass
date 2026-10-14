@@ -37,17 +37,30 @@ cleanest way is to delete the old integration entry and add it again.
 | 433 MHz motor/actuator (3) | `cover`: open / close / stop |
 | 433 MHz actuator with slider (56, 58) | `cover`: open / close / position |
 | Somfy RTS (23), Brel (27) | `cover`: open / close / stop ("my") |
-| 433 MHz motion and contact sensor (4, 5, 28), dusk sensor (14), doorbell button (6, 21, 50) | `binary_sensor` |
+| 433 MHz motion and contact sensor (4, 5, 28), dusk sensor (14) | `binary_sensor` |
+| 433 MHz doorbell button (6, 21, 50) | `binary_sensor` (pressed), `button` to ring the paired chime |
 | 433 MHz chime (13) | `button` (ring) |
 | 433 MHz remotes and wall switches (7–12, 15, 22, 25, 26, 29–31, 55) | per channel: `binary_sensor` (last button pressed), `event` on button press, `button` to transmit as the remote |
 | ARC alarm remote (16) | `event` (arm / disarm), low battery |
-| ARC alarm devices: contact, motion, smoke, siren (17–20) | `binary_sensor` + tamper, low battery, connectivity |
+| ARC alarm devices: contact, motion, smoke, siren (17–20) | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity (37, 42, 43, 46, 47, 49) | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
 | ICS-2000 alarm system (240) | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
 | P1 energy module (238) | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 
-Zigbee devices that report themselves offline are shown as unavailable.
+Zigbee devices that report themselves offline are shown as unavailable. Every Zigbee device
+has an *Identify* button: the device blinks for about 3 seconds, which shows the hub can
+reach it.
+
+## Testing alarms and the doorbell
+
+- **Doorbell button:** *Ring* makes the hub send the button's code, so the paired chime rings.
+- **ARC siren:** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
+  the real alarm; the app has no command to stop it, so the siren sounds for its configured
+  duration. It is disabled by default (enable it in the entity settings if you need it).
+- **Smoke detectors:** a real alarm test is only possible with the button on the detector
+  itself; the app cannot trigger it either. Zigbee smoke detectors can be checked with
+  *Identify*.
 
 The cloud often keeps returning the old value for a while after a command (especially
 for groups and their members). The integration therefore only takes over a value from the

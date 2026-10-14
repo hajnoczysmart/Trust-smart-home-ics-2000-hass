@@ -157,8 +157,14 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
 
     # ---- commands --------------------------------------------------------
 
-    async def async_send(self, device: TrustDevice, index: int, value: int) -> None:
-        """Send one action, update the local state optimistically, then re-poll."""
+    async def async_send(
+        self, device: TrustDevice, index: int, value: int, optimistic: bool = True
+    ) -> None:
+        """Send one action, update the local state optimistically, then re-poll.
+
+        Momentary actions (button presses) pass optimistic=False: they trigger
+        something but do not set a lasting state.
+        """
         try:
             await self.hass.async_add_executor_job(
                 self.client.send, device.kind, device.id, index, int(value), self.local_address
@@ -169,7 +175,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # Transmitters: wait for the hub instead of guessing, and remember
             # what we sent so the resulting change is not reported as a press.
             self.own_changes[(device.id, index)] = (int(value), time.monotonic() + 30)
-        elif device.kind != "scene":
+        elif optimistic and device.kind != "scene":
             # A group command also sets its members (update_group_members=true).
             targets = [device.id, *device.members] if device.kind == "group" else [device.id]
             for eid in targets:

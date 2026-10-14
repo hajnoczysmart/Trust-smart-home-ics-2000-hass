@@ -217,6 +217,7 @@ class ButtonSpec:
     value: int
     channel: int | None = None
     enabled_default: bool = True
+    device_class: str | None = None  # e.g. "identify"
 
 
 @dataclass(frozen=True)
@@ -438,6 +439,8 @@ def describe(dev: TrustDevice) -> Description:
         d.binary_sensors.append(BinarySpec("dusk", 0, (1,), None))
     elif t in RF_DOORBELL:
         d.binary_sensors.append(BinarySpec("pressed", 0, (1,), None))
+        # Doorbell transmitter press(0): the hub sends the button's code, the chime rings
+        d.buttons.append(ButtonSpec("ring", 0, 1))
     elif t in RF_CHIME:
         d.buttons.append(ButtonSpec("ring", 0, 1))
     elif t in ARC_CONTACT:
@@ -465,6 +468,13 @@ def describe(dev: TrustDevice) -> Description:
             BinarySpec("tamper", 4, (25,), "tamper", diagnostic=True),
             BinarySpec("battery_low", 5, (0,), "battery", diagnostic=True),
             BinarySpec("connectivity", 6, (1,), "connectivity", diagnostic=True),
+        ]
+        d.buttons += [
+            # Siren.armError(): index 2 = 35, the short "arm error" signal
+            ButtonSpec("siren_test", 2, 35),
+            # Siren.activateAlarm(): index 3 = 36, the real alarm; the app has no
+            # stop action, so it is disabled by default
+            ButtonSpec("siren_alarm", 3, 36, enabled_default=False),
         ]
     elif t in REMOTE_CHANNELS:
         _remote(REMOTE_CHANNELS[t], d)
@@ -495,6 +505,9 @@ def describe(dev: TrustDevice) -> Description:
         ]
     else:
         d.supported = False
+    if t in ZIGBEE_TYPES and dev.kind == "module":
+        # ZigbeeDevice.identify(): index 1 = 3, the device blinks for ~3 seconds
+        d.buttons.append(ButtonSpec("identify", 1, 3, device_class="identify"))
     return d
 
 

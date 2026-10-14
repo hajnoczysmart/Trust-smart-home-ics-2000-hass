@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/hajnoczysmart/Trust-smart-home-ics-2000-hass/issues",
   "loggers": ["custom_components.trust_smart_home"],
   "requirements": [],
-  "version": "1.3.0"
+  "version": "1.4.0"
 }

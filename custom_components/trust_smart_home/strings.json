@@ -86,6 +86,12 @@
       },
       "channel_off": {
         "name": "Channel {channel} off"
+      },
+      "siren_test": {
+        "name": "Test signal"
+      },
+      "siren_alarm": {
+        "name": "Sound alarm"
       }
     },
     "sensor": {
