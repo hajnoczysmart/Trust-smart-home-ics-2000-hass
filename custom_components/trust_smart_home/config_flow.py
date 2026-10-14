@@ -1,7 +1,9 @@
 """Config, reauth and options flow for Trust Smart Home (ICS-2000)."""
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -32,7 +34,23 @@ _LOGGER = logging.getLogger(__name__)
 
 def _login(email: str, password: str) -> dict[str, str]:
     """Blocking: authenticate and return {home_id: home_name}."""
-    return TrustClient(email, password).login()
+    client = TrustClient(email, password)
+    try:
+        return client.login()
+    finally:
+        client.close()
+
+
+_HOSTNAME = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$")
+
+
+def _valid_host(value: str) -> bool:
+    """The hub address must be an IP address or a host name, nothing else."""
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return bool(_HOSTNAME.match(value))
 
 
 class TrustConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -66,7 +84,13 @@ class TrustConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             self._data = {k: v for k, v in user_input.items() if v not in (None, "")}
-            error = await self._try_login(user_input[CONF_EMAIL], user_input[CONF_PASSWORD])
+            host = str(self._data.get(CONF_IP_ADDRESS, "")).strip()
+            if host:
+                self._data[CONF_IP_ADDRESS] = host
+            if host and not _valid_host(host):
+                error: str | None = "invalid_host"
+            else:
+                error = await self._try_login(user_input[CONF_EMAIL], user_input[CONF_PASSWORD])
             if error:
                 errors["base"] = error
             elif len(self._homes) == 1:

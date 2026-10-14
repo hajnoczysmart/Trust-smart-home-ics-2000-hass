@@ -320,42 +320,67 @@ class TrustDevice:
 
 
 def parse_sync(rows: list[dict[str, Any]]) -> list[TrustDevice]:
-    """Turn decrypted sync rows into devices, groups and scenes."""
+    """Turn decrypted sync rows into devices, groups and scenes.
+
+    The data comes from the cloud, so malformed rows are skipped instead of
+    breaking the whole setup.
+    """
     out: list[TrustDevice] = []
     for row in rows:
-        data = row.get("data") or {}
-        for kind in ("module", "group", "scene"):
-            body = data.get(kind)
-            if isinstance(body, dict):
-                break
-        else:
-            continue
-        smd = body.get("smd_info") or {}
-        info = body.get("info")
         try:
-            device_type: int | None = int(body["device"])
-        except (KeyError, TypeError, ValueError):
-            device_type = None
-        dev = TrustDevice(
-            id=int(row.get("id", body.get("id", 0))),
-            kind=kind,
-            name=str(body.get("name") or f"{kind.title()} {row.get('id')}"),
-            device_type=device_type,
-            info=[int(v) for v in info] if isinstance(info, list) else [0] * 16,
-            hidden=bool(smd.get("hidden", False)),
-        )
-        if kind == "group" and isinstance(body.get("modules"), list):
-            dev.members = [int(m) for m in body["modules"] if str(m).lstrip("-").isdigit()]
-        # The app only shows paired modules; virtual modules are always paired.
-        if kind == "module" and not dev.is_paired and dev.device_type not in VIRTUAL_TYPES:
-            continue
-        if kind == "scene" and dev.hidden:
-            continue  # internal scenes, e.g. the security walkout scene
-        if dev.device_type in IGNORED_TYPES:
-            continue
-        dev.description = describe(dev)
-        out.append(dev)
+            dev = _parse_row(row)
+        except (TypeError, ValueError, AttributeError):
+            dev = None
+        if dev is not None:
+            out.append(dev)
     return out
+
+
+def _small_int(value: Any) -> int:
+    v = int(value)
+    if not 0 <= v < 2**32:
+        raise ValueError("out of range")
+    return v
+
+
+def _parse_row(row: dict[str, Any]) -> TrustDevice | None:
+    data = row.get("data") or {}
+    if not isinstance(data, dict):
+        return None
+    for kind in ("module", "group", "scene"):
+        body = data.get(kind)
+        if isinstance(body, dict):
+            break
+    else:
+        return None
+    smd = body.get("smd_info")
+    smd = smd if isinstance(smd, dict) else {}
+    info = body.get("info")
+    try:
+        device_type: int | None = int(body["device"])
+    except (KeyError, TypeError, ValueError):
+        device_type = None
+    dev = TrustDevice(
+        id=_small_int(row.get("id", body.get("id", 0))),
+        kind=kind,
+        name=str(body.get("name") or f"{kind.title()} {row.get('id')}")[:200],
+        device_type=device_type,
+        info=[int(v) & 255 for v in info[:16]] if isinstance(info, list) else [0] * 16,
+        hidden=bool(smd.get("hidden", False)),
+    )
+    if kind == "group" and isinstance(body.get("modules"), list):
+        dev.members = [
+            int(m) for m in body["modules"] if str(m).isdigit() and 0 <= int(m) < 2**32
+        ]
+    # The app only shows paired modules; virtual modules are always paired.
+    if kind == "module" and not dev.is_paired and dev.device_type not in VIRTUAL_TYPES:
+        return None
+    if kind == "scene" and dev.hidden:
+        return None  # internal scenes, e.g. the security walkout scene
+    if dev.device_type in IGNORED_TYPES:
+        return None
+    dev.description = describe(dev)
+    return dev
 
 
 # ---------------------------------------------------------------------------

@@ -20,9 +20,13 @@ _LOGGER = logging.getLogger(__name__)
 def _connect(email: str, password: str, home: str) -> tuple[TrustClient, list[TrustDevice]]:
     """Blocking: log in, select the home and read all devices, groups and scenes."""
     client = TrustClient(email, password)
-    client.login()
-    client.select_home(home)
-    return client, parse_sync(client.sync())
+    try:
+        client.login()
+        client.select_home(home)
+        return client, parse_sync(client.sync())
+    except Exception:
+        client.close()
+        raise
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -77,5 +81,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry, [Platform(p) for p in PLATFORMS]
     )
     if ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if coordinator is not None:
+            await hass.async_add_executor_job(coordinator.client.close)
     return ok

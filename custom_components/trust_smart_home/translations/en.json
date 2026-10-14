@@ -28,7 +28,8 @@
       "invalid_auth": "Invalid email or password",
       "cannot_connect": "Cannot reach the Trust cloud",
       "no_homes": "This account has no homes",
-      "unknown": "Unexpected error, see the log"
+      "unknown": "Unexpected error, see the log",
+      "invalid_host": "Enter a valid IP address or host name"
     },
     "abort": {
       "already_configured": "This home is already configured",

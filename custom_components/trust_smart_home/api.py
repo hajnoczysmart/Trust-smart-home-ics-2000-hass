@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import socket
 from typing import Any
 
@@ -37,6 +38,39 @@ class TrustApiError(Exception):
 
 class TrustAuthError(TrustApiError):
     """Wrong e-mail or password."""
+
+
+# The cloud API takes the credentials as request parameters, so a failed
+# request's error text (which contains the URL) can include them. Never let
+# that reach the log or the UI.
+_SECRET_PARAMS = re.compile(
+    r"((?:password_hash|password|email|mac|command|aes_key)=)[^&\s'\")]*", re.IGNORECASE
+)
+
+
+def redact(text: str) -> str:
+    """Remove credentials and other request parameters from a message."""
+    return _SECRET_PARAMS.sub(r"\1***", text)
+
+
+def _request_error(endpoint: str, err: Exception) -> TrustApiError:
+    return TrustApiError(f"{endpoint}: {type(err).__name__}: {redact(str(err))}")
+
+
+def _as_int(value: Any) -> int:
+    """Status values from the cloud are integers; tolerate odd encodings."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _is_hex(value: Any, lengths: tuple[int, ...]) -> bool:
+    return isinstance(value, str) and len(value) in lengths and re.fullmatch(r"[0-9a-fA-F]+", value) is not None
 
 
 # --------------------------------------------------------------------------
@@ -123,6 +157,10 @@ class TrustClient:
         self.home_id: str | None = None
         self.home_name: str | None = None
 
+    def close(self) -> None:
+        """Release the HTTP connection pool."""
+        self.session.close()
+
     # ---- helpers ---------------------------------------------------------
 
     def _post(self, endpoint: str, data: dict[str, Any]) -> Any:
@@ -131,7 +169,7 @@ class TrustClient:
                 f"{API_URL}/{endpoint}", data=data, timeout=self.timeout
             )
         except requests.RequestException as err:
-            raise TrustApiError(f"{endpoint}: {err}") from err
+            raise _request_error(endpoint, err) from err
         if resp.status_code == 401:
             raise TrustAuthError("Incorrect e-mail or password")
         if resp.status_code != 200:
@@ -174,8 +212,12 @@ class TrustClient:
     def select_home(self, home_id: str) -> None:
         for home in self.homes:
             if str(home.get("home_id")) == str(home_id):
-                self.aes_key = home.get("aes_key") or ""
-                self.mac = home.get("mac") or ""
+                aes_key = str(home.get("aes_key") or "")
+                mac = str(home.get("mac") or "").replace(":", "").replace("-", "")
+                if not _is_hex(aes_key, (32, 48, 64)) or not _is_hex(mac, (12,)):
+                    raise TrustApiError("The cloud returned invalid hub data for this home")
+                self.aes_key = aes_key
+                self.mac = mac
                 self.home_id = str(home.get("home_id"))
                 self.home_name = home.get("home_name")
                 return
@@ -195,7 +237,13 @@ class TrustClient:
             except Exception as err:  # noqa: BLE001 - skip undecodable rows
                 _LOGGER.debug("Skipping entity %s: %s", item.get("id"), err)
                 continue
-            out.append({"id": int(item.get("id")), "data": data})
+            try:
+                entity_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(data, dict) or not 0 <= entity_id < 2**32:
+                continue
+            out.append({"id": entity_id, "data": data})
         return out
 
     def get_statuses(self, entity_ids: list[int]) -> dict[int, list[int]]:
@@ -222,9 +270,17 @@ class TrustClient:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Undecodable status for %s: %s", item.get("id"), err)
                 continue
+            if not isinstance(decoded, dict):
+                continue
+            try:
+                entity_id = int(item["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
             for kind in ENTITY_KINDS:
                 if isinstance(decoded.get(kind), dict):
-                    out[int(item["id"])] = list(decoded[kind].get("functions") or [])
+                    functions = decoded[kind].get("functions") or []
+                    if isinstance(functions, list):
+                        out[entity_id] = [_as_int(v) for v in functions[:256]]
                     break
         return out
 
@@ -262,7 +318,7 @@ class TrustClient:
         sock.settimeout(3)
         try:
             sock.sendto(frame, (host, LOCAL_PORT))
-            sock.recvfrom(1024)
+            sock.recvfrom(1024)  # acknowledgement; its content is not used
         finally:
             sock.close()
 
@@ -283,7 +339,7 @@ class TrustClient:
                 timeout=self.timeout,
             )
         except requests.RequestException as err:
-            raise TrustApiError(f"command.php: {err}") from err
+            raise _request_error("command.php", err) from err
         if resp.status_code == 401:
             raise TrustAuthError("Incorrect e-mail or password")
         if resp.status_code != 200:

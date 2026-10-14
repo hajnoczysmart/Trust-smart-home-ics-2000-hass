@@ -131,6 +131,20 @@ logger:
 
 The user interface is in English.
 
+## Security
+
+- **Credentials:** the Trust cloud API needs your e-mail and password with every request, so
+  they are stored in Home Assistant's config entry (like other cloud integrations). They are
+  only sent to `https://trustsmartcloud2.com` over HTTPS with certificate verification.
+  Error messages and logs are scrubbed, so the password, e-mail, hub MAC and commands never
+  appear in them. Consider using a strong, unique password for your Trust account.
+- **Local control:** commands to the hub on your LAN (UDP 2012) are encrypted with your
+  home's AES key, exactly like the app does. The hub address is validated (IP address or
+  host name only).
+- **Data from the cloud** (hub key and MAC, device lists, status values) is validated before
+  use; malformed entries are skipped instead of breaking the integration.
+- No other services are contacted, and no external Python packages are installed.
+
 ## License and credits
 
 The communication part of `api.py` is based on
