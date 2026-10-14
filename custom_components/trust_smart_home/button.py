@@ -42,8 +42,5 @@ class TrustButton(TrustEntity, ButtonEntity):
             self._attr_translation_key = spec.key
 
     async def async_press(self) -> None:
-        if self.spec.action == "identify":
-            await self.coordinator.async_identify(self.trust)
-            return
         # A press triggers something; it does not set a lasting state.
         await self.send(self.spec.index, self.spec.value, optimistic=False)

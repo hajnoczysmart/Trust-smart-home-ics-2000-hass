@@ -183,15 +183,6 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
 
-    async def async_identify(self, device: TrustDevice) -> None:
-        """Ask the hub to make a Zigbee device identify itself (blink)."""
-        try:
-            await self.hass.async_add_executor_job(
-                self.client.identify, device.short_id, self.local_address
-            )
-        except TrustApiError as err:
-            raise HomeAssistantError(f"Trust Smart Home: {err}") from err
-
     @callback
     def _schedule_refresh(self) -> None:
         if self._cancel_refresh:

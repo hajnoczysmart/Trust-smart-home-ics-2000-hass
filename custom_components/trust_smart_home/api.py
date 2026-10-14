@@ -26,9 +26,8 @@ _LOGGER = logging.getLogger(__name__)
 API_URL = "https://trustsmartcloud2.com/ics2000_api"
 LOCAL_PORT = 2012
 FRAME_MAGIC = 653213
-# MessageType values from the app
+# MessageType value from the app
 MSG_CONTROL_ENTITY = 128
-MSG_IDENTIFY_ZIGBEE = 137
 ENTITY_KINDS = ("module", "group", "scene")
 
 
@@ -131,11 +130,6 @@ def build_command(
     payload = json.dumps(command_payload(kind, entity_id, function, value))
     return build_frame(mac_hex, entity_id, encrypt(payload, aes_key_hex))
 
-
-def build_identify(mac_hex: str, aes_key_hex: str, short_id: int, duration: int = 3) -> bytes:
-    """MessageFactory.identify(): the hub tells a Zigbee device to identify itself."""
-    payload = json.dumps({"short id": int(short_id), "duration": int(duration)}, separators=(",", ":"))
-    return build_frame(mac_hex, 0, encrypt(payload, aes_key_hex), MSG_IDENTIFY_ZIGBEE)
 
 
 # --------------------------------------------------------------------------
@@ -299,10 +293,6 @@ class TrustClient:
             self.mac or "", self.aes_key or "", kind, entity_id, function, int(value)
         )
         self._deliver(frame, local_address)
-
-    def identify(self, short_id: int, local_address: str | None = None) -> None:
-        """Make a Zigbee device blink (as the app's 'identify' does)."""
-        self._deliver(build_identify(self.mac or "", self.aes_key or "", short_id), local_address)
 
     def _deliver(self, frame: bytes, local_address: str | None) -> None:
         if local_address:

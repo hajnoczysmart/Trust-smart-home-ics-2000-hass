@@ -48,10 +48,10 @@ cleanest way is to delete the old integration entry and add it again.
 | P1 energy module (238) | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 
-Zigbee devices that report themselves offline are shown as unavailable. Every Zigbee device
-has an *Identify* button (it sends the same identify message as the app): the device blinks
-for about 3 seconds, which shows the hub can reach it. Battery-powered sensors sleep most
-of the time and may react late or not at all.
+Zigbee devices that report themselves offline are shown as unavailable. Mains-powered Zigbee devices (bulbs, plugs, built-in
+switches and dimmers) have an *Identify* button: the device blinks for about 3 seconds,
+which shows the hub can reach it. Battery-powered Zigbee devices (sensors, lock, remote)
+sleep most of the time and ignore it, so they have no such button.
 
 ## Testing alarms and the doorbell
 
@@ -59,9 +59,9 @@ of the time and may react late or not at all.
 - **ARC siren:** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
   the real alarm; the app has no command to stop it, so the siren sounds for its configured
   duration. It is disabled by default (enable it in the entity settings if you need it).
-- **Smoke detectors:** a real alarm test is only possible with the button on the detector
-  itself; the app cannot trigger it either. Zigbee smoke detectors can be checked with
-  *Identify*.
+- **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a
+  test either). The detector sounds, and within about 5 seconds its *Smoke* sensor in Home
+  Assistant turns on, which tests the whole chain.
 
 The cloud often keeps returning the old value for a while after a command (especially
 for groups and their members). The integration therefore only takes over a value from the

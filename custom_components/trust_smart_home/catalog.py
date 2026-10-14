@@ -112,6 +112,8 @@ ZB_SWITCH = {33, 41, 53}
 ZB_DIMMER = {34, 54, 59}
 ZB_LIGHT = {35, 36, 40, 48}
 ZB_SENSOR = {37, 42, 43, 46, 47, 49}
+# Battery-powered Zigbee devices (sensors, lock, remote): asleep most of the time
+ZB_SLEEPY = ZB_SENSOR | {38, 39}
 ZIGBEE_TYPES = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 46, 47, 48, 49, 53, 54, 59}
 SECURITY_MODULE = 240
 ENERGY_MODULE = 238
@@ -218,7 +220,6 @@ class ButtonSpec:
     channel: int | None = None
     enabled_default: bool = True
     device_class: str | None = None  # e.g. "identify"
-    action: str = "control"  # "control": entity action; "identify": hub identify message
 
 
 @dataclass(frozen=True)
@@ -313,10 +314,6 @@ class TrustDevice:
     def ias_zone_type(self) -> int:
         return self.info_word(14)
 
-    @property
-    def short_id(self) -> int:
-        """ZigbeeDevice.getShortId(): the device's Zigbee network address."""
-        return self.info_word(0)
 
 
 def parse_sync(rows: list[dict[str, Any]]) -> list[TrustDevice]:
@@ -536,10 +533,11 @@ def describe(dev: TrustDevice) -> Description:
         ]
     else:
         d.supported = False
-    if t in ZIGBEE_TYPES and dev.kind == "module" and dev.short_id:
-        # The app identifies with a separate hub message (MessageFactory.identify:
-        # type IDENTIFY_ZIGBEE, {"short id", "duration": 3}), not an entity action.
-        d.buttons.append(ButtonSpec("identify", 0, 3, device_class="identify", action="identify"))
+    if t in ZIGBEE_TYPES and t not in ZB_SLEEPY and dev.kind == "module":
+        # ZigbeeDevice.identify(): function 1 = 3, the device blinks for ~3 seconds.
+        # (Confirmed on hardware; the app's pairing-time identify message is not
+        # delivered this way.) Battery devices sleep and ignore it, so they get none.
+        d.buttons.append(ButtonSpec("identify", 1, 3, device_class="identify"))
     return d
 
 
