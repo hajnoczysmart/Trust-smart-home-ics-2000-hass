@@ -26,26 +26,26 @@ cleanest way is to delete the old integration entry and add it again.
 
 ## Supported devices
 
-| Device (type ID) | Home Assistant entity |
+| Device | Home Assistant entity |
 |---|---|
-| 433 MHz switch, plug (1) | `switch` |
-| 433 MHz dimmer, bulb, rotary dimmer (2, 24, 57) | `light`, brightness in 15 steps |
-| Zigbee switch, plug, built-in switch (33, 41, 53) | `switch` |
-| Zigbee dimmer, built-in dimmer, plug dimmer (34, 54, 59) | `light`, brightness |
-| Zigbee bulb: RGB, tunable white, generic (35, 36, 40) | `light`: brightness, colour (HS), colour temperature – whatever the bulb advertises |
-| Zigbee light group (48) | `light` for the group; its state is derived from the members (on if any member is on) |
-| 433 MHz motor/actuator (3) | `cover`: open / close / stop |
-| 433 MHz actuator with slider (56, 58) | `cover`: open / close / position |
-| Somfy RTS (23), Brel (27) | `cover`: open / close / stop ("my") |
-| 433 MHz motion and contact sensor (4, 5, 28), dusk sensor (14) | `binary_sensor` |
-| 433 MHz doorbell button (6, 21, 50) | `binary_sensor` (pressed), `button` to ring the paired chime |
-| 433 MHz chime (13) | `button` (ring) |
-| 433 MHz remotes and wall switches (7–12, 15, 22, 25, 26, 29–31, 55) | per channel: `binary_sensor` (last button pressed), `event` on button press, `button` to transmit as the remote |
-| Security system remote, 868 MHz (16) | `event` (arm / disarm), low battery |
-| Security system devices, 868 MHz: contact, motion, smoke, siren (17–20) | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
-| Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity (37, 42, 43, 46, 47, 49) | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
-| ICS-2000 alarm system (240) | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
-| P1 energy module (238) | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
+| 433 MHz switch, plug | `switch` |
+| 433 MHz dimmer, bulb, rotary dimmer | `light`, brightness in 15 steps |
+| Zigbee switch, plug, built-in switch | `switch` |
+| Zigbee dimmer, built-in dimmer, plug dimmer | `light`, brightness |
+| Zigbee bulb: RGB, tunable white, generic | `light`: brightness, colour (HS), colour temperature – whatever the bulb advertises |
+| Zigbee light group | `light` for the group; its state is derived from the members (on if any member is on) |
+| 433 MHz motor/actuator | `cover`: open / close / stop |
+| 433 MHz actuator with slider | `cover`: open / close / position |
+| Somfy RTS, Brel | `cover`: open / close / stop ("my") |
+| 433 MHz motion and contact sensor, dusk sensor | `binary_sensor` |
+| 433 MHz doorbell button | `binary_sensor` (pressed), `button` to ring the paired chime |
+| 433 MHz chime | `button` (ring) |
+| 433 MHz remotes and wall switches | per channel: `binary_sensor` (last button pressed), `event` on button press, `button` to transmit as the remote |
+| Security system remote, 868 MHz | `event` (arm / disarm), low battery |
+| Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
+| Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
+| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
+| P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
 
