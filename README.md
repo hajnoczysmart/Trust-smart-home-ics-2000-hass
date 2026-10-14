@@ -2,7 +2,7 @@
 
 Control the devices, groups and scenes you added in the Trust Smart Home app (via the
 ICS-2000 hub) from Home Assistant. Supports 433 MHz KlikAanKlikUit/Trust, Zigbee,
-Somfy RTS and Brel devices, the ICS-2000 alarm system and the P1 energy meter. No
+Somfy RTS and Brel devices, the 868 MHz security system devices, the ICS-2000 alarm system and the P1 energy meter. No
 external Python packages are required.
 
 The device types, status positions and command values come from the official
@@ -41,8 +41,8 @@ cleanest way is to delete the old integration entry and add it again.
 | 433 MHz doorbell button (6, 21, 50) | `binary_sensor` (pressed), `button` to ring the paired chime |
 | 433 MHz chime (13) | `button` (ring) |
 | 433 MHz remotes and wall switches (7–12, 15, 22, 25, 26, 29–31, 55) | per channel: `binary_sensor` (last button pressed), `event` on button press, `button` to transmit as the remote |
-| ARC alarm remote (16) | `event` (arm / disarm), low battery |
-| ARC alarm devices: contact, motion, smoke, siren (17–20) | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
+| Security system remote, 868 MHz (16) | `event` (arm / disarm), low battery |
+| Security system devices, 868 MHz: contact, motion, smoke, siren (17–20) | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity (37, 42, 43, 46, 47, 49) | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
 | ICS-2000 alarm system (240) | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
 | P1 energy module (238) | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
@@ -56,7 +56,7 @@ sleep most of the time and ignore it, so they have no such button.
 ## Testing alarms and the doorbell
 
 - **Doorbell button:** *Ring* makes the hub send the button's code, so the paired chime rings.
-- **ARC siren:** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
+- **Security siren (868 MHz):** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
   the real alarm; the app has no command to stop it, so the siren sounds for its configured
   duration. It is disabled by default (enable it in the entity settings if you need it).
 - **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a

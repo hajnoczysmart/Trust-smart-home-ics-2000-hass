@@ -32,11 +32,11 @@ DEVICE_TYPE_NAMES: dict[int, str] = {
     13: "Chime",
     14: "Dusk sensor",
     15: "Remote control AYCT-202",
-    16: "ARC remote",
-    17: "ARC contact sensor",
-    18: "ARC motion sensor",
-    19: "ARC smoke sensor",
-    20: "ARC siren",
+    16: "Security remote (868 MHz)",
+    17: "Security contact sensor (868 MHz)",
+    18: "Security motion sensor (868 MHz)",
+    19: "Security smoke sensor (868 MHz)",
+    20: "Security siren (868 MHz)",
     21: "Doorbell ACDB-7000B",
     22: "AWMT built-in wall switch",
     23: "Somfy actuator",
@@ -85,7 +85,8 @@ DEVICE_TYPE_NAMES: dict[int, str] = {
     244: "Weather module",
 }
 
-# Families
+# Families. The security system devices (16-20) use 868 MHz; the other
+# KlikAanKlikUit devices, including ARC remotes 29-31, use 433 MHz.
 RF_SWITCH = {1}
 RF_DIMMER = {2, 24, 57}  # Light and RotaryDimmerWithMatter extend Dimmer
 RF_ACTUATOR = {3}
@@ -107,7 +108,7 @@ REMOTE_CHANNELS = {
     9: 1, 10: 2, 11: 4, 15: 5, 55: 5, 12: 17, 29: 1,  # RemoteControl
     7: 1, 8: 2, 30: 1, 22: 2, 25: 1, 26: 2, 31: 1,  # WallSwitch
 }
-ARC_REMOTE = {16}  # security remote: index 0 = 38 arm / 39 disarm, index 1 battery
+ARC_REMOTE = {16}  # 868 MHz security remote: index 0 = 38 arm / 39 disarm, index 1 battery
 ZB_SWITCH = {33, 41, 53}
 ZB_DIMMER = {34, 54, 59}
 ZB_LIGHT = {35, 36, 40, 48}
