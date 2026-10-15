@@ -376,21 +376,20 @@ class TrustClient:
     def _deliver(self, frame: bytes, local_address: str | None) -> None:
         if local_address:
             try:
-                self._send_local(frame, local_address)
-                return
+                # Like the app: when the hub answers "busy" (e.g. it is still
+                # handling the previous command), wait a moment and send again.
+                reply = self._exchange(frame, local_address)
             except OSError as err:
                 _LOGGER.debug("Local send to %s failed (%s), using cloud", local_address, err)
+            else:
+                if len(reply) > 43 and reply[2] == MSG_NOT_ACKNOWLEDGE:
+                    if reply[43] in BUSY_ERRORS:
+                        _LOGGER.debug("Hub stayed busy, sending through the cloud")
+                        self._send_cloud(frame)
+                        return
+                    _LOGGER.debug("Hub refused the command (error %s)", reply[43])
+                return
         self._send_cloud(frame)
-
-    def _send_local(self, frame: bytes, host: str) -> bytes:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(3)
-        try:
-            sock.sendto(frame, (host, LOCAL_PORT))
-            reply, _addr = sock.recvfrom(8192)  # the hub's acknowledgement
-            return reply
-        finally:
-            sock.close()
 
     def _exchange(self, frame: bytes, host: str, expect_data: bool = False) -> bytes:
         """Send a message on the LAN the way the app does and return the reply.
