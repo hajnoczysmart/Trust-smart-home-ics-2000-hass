@@ -226,6 +226,8 @@ The user interface is in English.
 
 ## License and credits
 
+Licensed under the [Apache License 2.0](LICENSE).
+
 The communication part of `api.py` is based on
 [ics_2000_python](https://github.com/zefanjajobse/ics_2000_python) (Apache License 2.0);
 the rest is original code.
