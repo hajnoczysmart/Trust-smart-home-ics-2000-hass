@@ -13,8 +13,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import random
 import re
 import socket
+import time
 from typing import Any
 
 import requests
@@ -32,6 +34,8 @@ MSG_UPDATE_USER_SETTINGS = 17
 MSG_GET_USER_SETTINGS = 18
 MSG_ACKNOWLEDGE = 252
 MSG_NOT_ACKNOWLEDGE = 253
+BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
+BUSY_RETRIES = 20  # as the app's local transport
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
 LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
 ENTITY_KINDS = ("module", "group", "scene", "scenario")  # scenario = app rule
@@ -388,6 +392,33 @@ class TrustClient:
         finally:
             sock.close()
 
+    def _exchange(self, frame: bytes, host: str, expect_data: bool = False) -> bytes:
+        """Send a message on the LAN the way the app does and return the reply.
+
+        - "busy" (NAK 17-20): wait 40-60 ms and send again, up to 20 times;
+        - a request is first acknowledged, then answered in a second packet.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2)
+        try:
+            reply = b""
+            for _attempt in range(BUSY_RETRIES + 1):
+                sock.sendto(frame, (host, LOCAL_PORT))
+                reply, _addr = sock.recvfrom(8192)
+                if len(reply) > 43 and reply[2] == MSG_NOT_ACKNOWLEDGE and reply[43] in BUSY_ERRORS:
+                    _LOGGER.debug("Hub busy (error %s), retrying", reply[43])
+                    time.sleep(random.uniform(0.04, 0.06))
+                    continue
+                break
+            if expect_data and len(reply) >= 3 and reply[2] == MSG_ACKNOWLEDGE:
+                try:
+                    reply, _addr = sock.recvfrom(8192)  # the actual answer
+                except socket.timeout:
+                    pass  # only an acknowledgement came
+            return reply
+        finally:
+            sock.close()
+
     # ---- hub settings (experimental) -----------------------------------------
 
     def get_led(self, local_address: str | None) -> str | None:
@@ -402,7 +433,7 @@ class TrustClient:
             self.mac or "", self.aes_key or "", MSG_GET_USER_SETTINGS, {"user_setting": "led"}
         )
         try:
-            raw = self._send_local(frame, local_address)
+            raw = self._exchange(frame, local_address, expect_data=True)
             msg_type, versions, text, code = parse_reply(raw, self.aes_key or "")
         except (OSError, ValueError) as err:
             _LOGGER.debug("Reading the LED setting failed: %s", err)
@@ -425,7 +456,7 @@ class TrustClient:
                 self.mac or "", self.aes_key or "", MSG_UPDATE_USER_SETTINGS, data, self._versions
             )
             try:
-                raw = self._send_local(frame, local_address)
+                raw = self._exchange(frame, local_address)
             except OSError as err:
                 _LOGGER.debug("Local LED update failed (%s), using cloud", err)
             else:
@@ -435,6 +466,8 @@ class TrustClient:
                     return
                 _LOGGER.debug("LED update reply: type %s, error %s", msg_type, code)
                 if msg_type == MSG_NOT_ACKNOWLEDGE:
+                    if code in BUSY_ERRORS:
+                        raise TrustApiError(f"The hub stayed busy, try again later (error {code})")
                     raise TrustApiError(f"The hub refused the LED setting (error {code})")
                 self._versions = versions
                 return
