@@ -426,7 +426,9 @@ def _zigbee_sensor(dev: TrustDevice, desc: Description) -> None:
     fns = dev.zigbee_functions
     t = dev.device_type
     if fns <= {0, 1, 2}:  # no mask advertised: fall back to the type
-        fns = {0, 1, 2, 3, 5, 7} if t != 46 else {0, 1, 2, 3, 4, 11}
+        # Battery and alarm only. Tamper (7) is shown only when the device
+        # advertises it, like the app: without it the hub does not report it.
+        fns = {0, 1, 2, 3, 5} if t != 46 else {0, 1, 2, 3, 4, 11}
     if t == 49:
         alarm_class = "smoke"  # FireAngel
     else:
