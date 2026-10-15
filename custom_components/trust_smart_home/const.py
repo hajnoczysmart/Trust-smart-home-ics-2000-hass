@@ -26,6 +26,7 @@ PLATFORMS = [
     "event",
     "light",
     "scene",
+    "select",
     "sensor",
     "switch",
 ]

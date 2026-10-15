@@ -48,6 +48,7 @@ cleanest way is to delete the old integration entry and add it again.
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
+| ICS-2000 hub LED (experimental) | `select`: on / off / disco, on an *ICS-2000* device |
 
 Zigbee devices that report themselves offline are shown as unavailable. Mains-powered Zigbee devices (bulbs, plugs, built-in
 switches and dimmers) have an *Identify* button: the device blinks for about 3 seconds,
@@ -98,6 +99,16 @@ Rules (automations) created in the Trust Smart Home app appear on a *Rules* devi
 - a **Run** button executes the rule's actions immediately.
 
 Internal rules of the security system are hidden, as in the app.
+
+## Hub LED (experimental)
+
+The *ICS-2000 → Hub LED* select changes the hub's LED setting (on, off or disco), the
+same setting as in the app's settings. Unlike device commands, this is a settings message
+that has to carry the hub's current data versions, so it works best with the hub's IP
+address configured: the integration then reads the current setting and the versions from
+the hub first. Without an IP address it is sent through the cloud and the last value set
+from Home Assistant is shown. If the hub refuses the change, an error is shown; with
+debug logging enabled, the hub's replies are logged.
 
 ## Settings
 

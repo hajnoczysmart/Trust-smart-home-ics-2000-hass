@@ -217,6 +217,20 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
 
+    # ---- hub LED (experimental) ------------------------------------------
+
+    async def async_read_led(self) -> str | None:
+        """Ask the hub for its LED setting (LAN only); None if unknown."""
+        return await self.hass.async_add_executor_job(self.client.get_led, self.local_address)
+
+    async def async_set_led(self, state: str) -> None:
+        try:
+            await self.hass.async_add_executor_job(
+                self.client.set_led, state, self.local_address
+            )
+        except TrustApiError as err:
+            raise HomeAssistantError(f"Trust Smart Home: {err}") from err
+
     @callback
     def _schedule_refresh(self) -> None:
         if self._cancel_refresh:

@@ -158,6 +158,16 @@
       "arm_disarm": {
         "name": "Arm / disarm"
       }
+    },
+    "select": {
+      "hub_led": {
+        "name": "Hub LED",
+        "state": {
+          "on": "On",
+          "off": "Off",
+          "disco": "Disco"
+        }
+      }
     }
   }
 }

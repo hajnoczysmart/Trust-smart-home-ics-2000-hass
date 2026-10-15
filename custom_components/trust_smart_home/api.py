@@ -26,8 +26,14 @@ _LOGGER = logging.getLogger(__name__)
 API_URL = "https://trustsmartcloud2.com/ics2000_api"
 LOCAL_PORT = 2012
 FRAME_MAGIC = 653213
-# MessageType value from the app
+# MessageType values from the app
 MSG_CONTROL_ENTITY = 128
+MSG_UPDATE_USER_SETTINGS = 17
+MSG_GET_USER_SETTINGS = 18
+MSG_ACKNOWLEDGE = 252
+MSG_NOT_ACKNOWLEDGE = 253
+VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
+LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
 ENTITY_KINDS = ("module", "group", "scene", "scenario")  # scenario = app rule
 
 
@@ -110,15 +116,25 @@ def command_payload(kind: str, entity_id: int, function: int, value: int) -> dic
 
 
 def build_frame(
-    mac_hex: str, entity_id: int, encrypted: bytes, msg_type: int = MSG_CONTROL_ENTITY
+    mac_hex: str,
+    entity_id: int,
+    encrypted: bytes,
+    msg_type: int = MSG_CONTROL_ENTITY,
+    versions: bytes | None = None,
 ) -> bytes:
-    """43-byte header followed by the encrypted payload."""
+    """43-byte header followed by the encrypted payload.
+
+    versions: the hub's data versions (header bytes 13-28), only needed for
+    settings messages; the hub returns them in every reply.
+    """
     header = bytearray(43)
     header[0] = 1  # frame
     header[2] = msg_type
     mac = bytes.fromhex(mac_hex.replace(":", "").replace("-", ""))[:6]
     header[3 : 3 + len(mac)] = mac
     header[9:13] = FRAME_MAGIC.to_bytes(4, "little")
+    if versions is not None and len(versions) == VERSIONS_LEN:
+        header[13 : 13 + VERSIONS_LEN] = versions
     header[29:33] = int(entity_id).to_bytes(4, "little")
     header[41:43] = len(encrypted).to_bytes(2, "little")
     return bytes(header) + encrypted
@@ -129,6 +145,64 @@ def build_command(
 ) -> bytes:
     payload = json.dumps(command_payload(kind, entity_id, function, value))
     return build_frame(mac_hex, entity_id, encrypt(payload, aes_key_hex))
+
+
+def build_settings_message(
+    mac_hex: str, aes_key_hex: str, msg_type: int, data: dict, versions: bytes | None = None
+) -> bytes:
+    """GET_USER_SETTINGS / UPDATE_USER_SETTINGS frame (no entity)."""
+    payload = json.dumps(data, separators=(",", ":"))
+    return build_frame(mac_hex, 0, encrypt(payload, aes_key_hex), msg_type, versions)
+
+
+def parse_reply(raw: bytes, aes_key_hex: str) -> tuple[int, bytes, str | None, int | None]:
+    """(message type, data versions, decrypted data or None, NAK error code)."""
+    if len(raw) < 43:
+        raise ValueError("short reply")
+    msg_type = raw[2]
+    versions = bytes(raw[13 : 13 + VERSIONS_LEN])
+    length = int.from_bytes(raw[41:43], "little")
+    data = raw[43 : 43 + length]
+    if msg_type == MSG_NOT_ACKNOWLEDGE:
+        return msg_type, versions, None, data[0] if data else None
+    text = None
+    if len(data) > 16:
+        dec = _cipher(aes_key_hex, bytes(data[:16])).decryptor()
+        plain = dec.update(bytes(data[16:])) + dec.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        try:
+            text = (unpadder.update(plain) + unpadder.finalize()).decode("utf-8", "replace")
+        except ValueError:
+            text = plain.decode("utf-8", "replace")
+    return msg_type, versions, text, None
+
+
+def _loads(text: str | None) -> Any:
+    if not text:
+        return None
+    try:
+        return json.loads(text.strip("\x00 \r\n"))
+    except ValueError:
+        return None
+
+
+def _find_key(data: Any, key: str, depth: int = 0) -> Any:
+    """First value of `key` in nested JSON (the reply layout is not documented)."""
+    if depth > 5:
+        return None
+    if isinstance(data, dict):
+        if key in data:
+            return data[key]
+        values = data.values()
+    elif isinstance(data, list):
+        values = data
+    else:
+        return None
+    for value in values:
+        found = _find_key(value, key, depth + 1)
+        if found is not None:
+            return found
+    return None
 
 
 
@@ -150,6 +224,7 @@ class TrustClient:
         self.mac: str | None = None
         self.home_id: str | None = None
         self.home_name: str | None = None
+        self._versions: bytes | None = None  # hub data versions from the last reply
 
     def close(self) -> None:
         """Release the HTTP connection pool."""
@@ -303,14 +378,70 @@ class TrustClient:
                 _LOGGER.debug("Local send to %s failed (%s), using cloud", local_address, err)
         self._send_cloud(frame)
 
-    def _send_local(self, frame: bytes, host: str) -> None:
+    def _send_local(self, frame: bytes, host: str) -> bytes:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(3)
         try:
             sock.sendto(frame, (host, LOCAL_PORT))
-            sock.recvfrom(1024)  # acknowledgement; its content is not used
+            reply, _addr = sock.recvfrom(8192)  # the hub's acknowledgement
+            return reply
         finally:
             sock.close()
+
+    # ---- hub settings (experimental) -----------------------------------------
+
+    def get_led(self, local_address: str | None) -> str | None:
+        """The hub's LED setting, asked on the LAN like the app (None if unknown).
+
+        The reply also carries the hub's data versions, which a settings
+        update must repeat.
+        """
+        if not local_address:
+            return None
+        frame = build_settings_message(
+            self.mac or "", self.aes_key or "", MSG_GET_USER_SETTINGS, {"user_setting": "led"}
+        )
+        try:
+            raw = self._send_local(frame, local_address)
+            msg_type, versions, text, code = parse_reply(raw, self.aes_key or "")
+        except (OSError, ValueError) as err:
+            _LOGGER.debug("Reading the LED setting failed: %s", err)
+            return None
+        _LOGGER.debug("LED setting reply: type %s, error %s, data %s", msg_type, code, text)
+        if msg_type == MSG_NOT_ACKNOWLEDGE:
+            return None
+        self._versions = versions
+        value = _find_key(_loads(text), "led")
+        return value if value in LED_STATES else None
+
+    def set_led(self, state: str, local_address: str | None) -> None:
+        """Change the hub's LED setting (UPDATE_USER_SETTINGS {"led": ...})."""
+        if state not in LED_STATES:
+            raise ValueError(f"Unknown LED state {state!r}")
+        data = {"led": state}
+        if local_address:
+            self.get_led(local_address)  # refreshes the data versions
+            frame = build_settings_message(
+                self.mac or "", self.aes_key or "", MSG_UPDATE_USER_SETTINGS, data, self._versions
+            )
+            try:
+                raw = self._send_local(frame, local_address)
+            except OSError as err:
+                _LOGGER.debug("Local LED update failed (%s), using cloud", err)
+            else:
+                try:
+                    msg_type, versions, _text, code = parse_reply(raw, self.aes_key or "")
+                except ValueError:
+                    return
+                _LOGGER.debug("LED update reply: type %s, error %s", msg_type, code)
+                if msg_type == MSG_NOT_ACKNOWLEDGE:
+                    raise TrustApiError(f"The hub refused the LED setting (error {code})")
+                self._versions = versions
+                return
+        frame = build_settings_message(
+            self.mac or "", self.aes_key or "", MSG_UPDATE_USER_SETTINGS, data, self._versions
+        )
+        self._send_cloud(frame)
 
     def _send_cloud(self, frame: bytes) -> None:
         if self.mac is None:
