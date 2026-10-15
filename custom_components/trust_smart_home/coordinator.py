@@ -14,7 +14,14 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import TrustApiError, TrustAuthError, TrustClient
+from .api import (
+    SETTING_FW_UPDATE_DISABLED,
+    SETTING_LOCAL_ONLY,
+    SETTING_ZIGBEE_CHANNEL,
+    TrustApiError,
+    TrustAuthError,
+    TrustClient,
+)
 from .catalog import TrustDevice, derive_group_status, group_state_indexes, status_value
 from .const import (
     CONF_LOCAL_STATUS,
@@ -90,6 +97,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._sent: dict[tuple[int, int], deque[tuple[int, float]]] = {}
         # running animations (police effect, fades): owner -> affected entity ids
         self.animations: dict[Any, set[int]] = {}
+        # hub information read on the LAN: {"device": {...}, "settings": {...}}
+        self.hub_info: dict[str, dict[str, Any]] = {}
 
     def is_own_change(self, entity_id: int, index: int, value: int) -> bool:
         """True (once) if this value change was caused by our own command."""
@@ -293,6 +302,40 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 self._remember_sent(eid, index, int(value))
             self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
+
+    # ---- the hub itself -------------------------------------------------
+
+    async def async_refresh_hub_info(self) -> None:
+        """Read firmware versions and a few settings from the hub (LAN only)."""
+        host = self.local_address
+        if not host:
+            return
+
+        def _read() -> dict[str, dict[str, Any]]:
+            settings = {
+                key: self.client.get_setting(key, host)
+                for key in (SETTING_FW_UPDATE_DISABLED, SETTING_ZIGBEE_CHANNEL, SETTING_LOCAL_ONLY)
+            }
+            return {"device": self.client.get_device_info(host) or {}, "settings": settings}
+
+        self.hub_info = await self.hass.async_add_executor_job(_read)
+        self.async_update_listeners()
+
+    async def async_set_hub_setting(self, key: str, value: Any) -> None:
+        try:
+            await self.hass.async_add_executor_job(
+                self.client.set_setting, {key: value}, self.local_address
+            )
+        except TrustApiError as err:
+            raise HomeAssistantError(f"Trust Smart Home: {err}") from err
+        self.hub_info.setdefault("settings", {})[key] = value
+        self.async_update_listeners()
+
+    async def async_reboot(self) -> None:
+        try:
+            await self.hass.async_add_executor_job(self.client.reboot, self.local_address)
+        except TrustApiError as err:
+            raise HomeAssistantError(f"Trust Smart Home: {err}") from err
 
     # ---- hub LED (experimental) ------------------------------------------
 

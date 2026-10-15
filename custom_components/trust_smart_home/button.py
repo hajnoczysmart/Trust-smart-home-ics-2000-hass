@@ -12,17 +12,20 @@ from .catalog import ButtonSpec, TrustDevice
 from .const import DOMAIN
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
+from .hub import TrustHubEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: TrustCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities: list[ButtonEntity] = [
         TrustButton(coordinator, dev, spec)
         for dev in coordinator.devices.values()
         for spec in dev.description.buttons
-    )
+    ]
+    entities.append(TrustHubRestart(coordinator))
+    async_add_entities(entities)
 
 
 class TrustButton(TrustEntity, ButtonEntity):
@@ -47,3 +50,16 @@ class TrustButton(TrustEntity, ButtonEntity):
     async def async_press(self) -> None:
         # A press triggers something; it does not set a lasting state.
         await self.send(self.spec.index, self.spec.value, optimistic=False)
+
+
+class TrustHubRestart(TrustHubEntity, ButtonEntity):
+    """Restarts the hub, like "Reboot" in the app's settings."""
+
+    _attr_device_class = ButtonDeviceClass.RESTART
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: TrustCoordinator) -> None:
+        super().__init__(coordinator, "restart")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_reboot()

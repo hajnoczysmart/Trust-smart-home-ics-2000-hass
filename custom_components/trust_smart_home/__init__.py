@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 
 from .api import TrustApiError, TrustAuthError, TrustClient
 from .catalog import TrustDevice, parse_sync
@@ -15,6 +17,8 @@ from .const import CONF_HOME, DOMAIN, MANUFACTURER, PLATFORMS
 from .coordinator import TrustCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+HUB_INFO_INTERVAL = timedelta(hours=6)
 
 
 def _connect(email: str, password: str, home: str) -> tuple[TrustClient, list[TrustDevice]]:
@@ -52,12 +56,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info("ICS-2000 not found on the LAN; using the Trust cloud only")
     await coordinator.async_config_entry_first_refresh()
 
+    await coordinator.async_refresh_hub_info()
+    hub_device = coordinator.hub_info.get("device") or {}
     dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, coordinator.mac)},
         manufacturer=MANUFACTURER,
         model="ICS-2000",
         name=client.home_name or "ICS-2000",
+        sw_version=_text(hub_device.get("SW_revision")),
+        hw_version=_text(hub_device.get("HW_revision")),
     )
     # 1.6-1.8 put the hub LED on a separate "ICS-2000" device; it now lives on
     # the hub device above, so remove the empty duplicate.
@@ -83,7 +91,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     entry.async_on_unload(coordinator.async_shutdown_timers)
+
+    async def _refresh_hub_info(_now: object) -> None:
+        await coordinator.async_refresh_hub_info()
+
+    entry.async_on_unload(async_track_time_interval(hass, _refresh_hub_info, HUB_INFO_INTERVAL))
     return True
+
+
+def _text(value: object) -> str | None:
+    return str(value)[:64] if value not in (None, "") else None
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:

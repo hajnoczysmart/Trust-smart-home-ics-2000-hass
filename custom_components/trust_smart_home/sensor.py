@@ -24,6 +24,8 @@ from .catalog import SensorSpec, TrustDevice, sensor_value
 from .const import DOMAIN, ROLE_SENSOR
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
+from .hub import TrustHubEntity
+from .api import SETTING_ZIGBEE_CHANNEL
 
 # kind -> (device class, unit, state class, entity category)
 _KINDS: dict[str, tuple[Any, Any, Any, Any]] = {
@@ -79,6 +81,11 @@ async def async_setup_entry(
         dev = coordinator.devices.get(int(dev_id))
         if dev is not None and mapping.get("role") == ROLE_SENSOR:
             entities.append(TrustMappedSensor(coordinator, dev, int(mapping.get("index", 0))))
+    entities += [
+        TrustHubSensor(coordinator, "firmware", "device", "SW_revision"),
+        TrustHubSensor(coordinator, "zigbee_firmware", "device", "ZigBee_firmware_version"),
+        TrustHubSensor(coordinator, "zigbee_channel", "settings", SETTING_ZIGBEE_CHANNEL),
+    ]
     async_add_entities(entities)
 
 
@@ -149,3 +156,18 @@ class TrustMappedSensor(TrustEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return self.value(self._index)
+
+
+class TrustHubSensor(TrustHubEntity, SensorEntity):
+    """Information about the hub, read on the LAN."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: TrustCoordinator, key: str, section: str, field: str) -> None:
+        super().__init__(coordinator, key)
+        self._section, self._field = section, field
+
+    @property
+    def native_value(self) -> str | None:
+        value = self.hub_value(self._section, self._field)
+        return str(value)[:64] if value not in (None, "") else None

@@ -16,7 +16,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .api import SETTING_LOCAL_ONLY
 from .catalog import BinarySpec, TrustDevice
+from .hub import TrustHubEntity
 from .const import DOMAIN, ROLE_BINARY_SENSOR
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
@@ -26,7 +28,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: TrustCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[TrustBinarySensor] = [
+    entities: list[BinarySensorEntity] = [
         TrustBinarySensor(coordinator, dev, spec)
         for dev in coordinator.devices.values()
         for spec in dev.description.binary_sensors
@@ -35,6 +37,7 @@ async def async_setup_entry(
         dev = coordinator.devices.get(int(dev_id))
         if dev is not None and mapping.get("role") == ROLE_BINARY_SENSOR:
             entities.append(TrustBinarySensor(coordinator, dev, _mapped_spec(mapping)))
+    entities.append(TrustHubLocalOnly(coordinator))
     async_add_entities(entities)
 
 
@@ -68,3 +71,20 @@ class TrustBinarySensor(TrustEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         value = self.value(self.spec.index)
         return None if value is None else value in self.spec.on_values
+
+
+class TrustHubLocalOnly(TrustHubEntity, BinarySensorEntity):
+    """The app's "force local communication" setting of the hub."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: TrustCoordinator) -> None:
+        super().__init__(coordinator, "local_only")
+
+    @property
+    def is_on(self) -> bool | None:
+        value = self.hub_value("settings", SETTING_LOCAL_ONLY)
+        try:
+            return int(value) == 1
+        except (TypeError, ValueError):
+            return None

@@ -31,6 +31,8 @@ FRAME_MAGIC = 653213
 # MessageType values from the app
 MSG_CONTROL_ENTITY = 128
 MSG_ANNOUNCEMENT = 3  # the app's LAN discovery broadcast
+MSG_GET_DEVICE_INFO = 16
+MSG_REMOTE_REBOOT = 180
 MSG_UPDATE_USER_SETTINGS = 17
 MSG_GET_USER_SETTINGS = 18
 MSG_GET_ENTITY_STATUS = 132  # not used by the app itself (it reads statuses from the cloud)
@@ -41,6 +43,10 @@ BUSY_RETRIES = 20  # as the app's local transport
 LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
 LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
+# Hub settings (Settings / pj4 JSON names)
+SETTING_FW_UPDATE_DISABLED = "disable_fw_update_check"  # 1 = no automatic firmware updates
+SETTING_ZIGBEE_CHANNEL = "zigbee_channel"
+SETTING_LOCAL_ONLY = "local_communication_only"  # app: "force local communication"
 ENTITY_KINDS = ("module", "group", "scene", "scenario")  # scenario = app rule
 
 
@@ -533,10 +539,10 @@ class TrustClient:
                 results.append({"request": name, "failed": f"{type(err).__name__}: {err}"})
         return results
 
-    # ---- hub settings (experimental) -----------------------------------------
+    # ---- hub settings, information and restart --------------------------------
 
-    def get_led(self, local_address: str | None) -> str | None:
-        """The hub's LED setting, asked on the LAN like the app (None if unknown).
+    def get_setting(self, key: str, local_address: str | None) -> Any:
+        """One hub setting, asked on the LAN like the app (None if unknown).
 
         The reply also carries the hub's data versions, which a settings
         update must repeat.
@@ -544,50 +550,85 @@ class TrustClient:
         if not local_address:
             return None
         frame = build_settings_message(
-            self.mac or "", self.aes_key or "", MSG_GET_USER_SETTINGS, {"user_setting": "led"}
+            self.mac or "", self.aes_key or "", MSG_GET_USER_SETTINGS, {"user_setting": key}
         )
         try:
             raw = self._exchange(frame, local_address, expect_data=True)
             msg_type, versions, text, code = parse_reply(raw, self.aes_key or "")
         except (OSError, ValueError) as err:
-            _LOGGER.debug("Reading the LED setting failed: %s", err)
+            _LOGGER.debug("Reading the hub setting %s failed: %s", key, err)
             return None
-        _LOGGER.debug("LED setting reply: type %s, error %s, data %s", msg_type, code, text)
+        _LOGGER.debug("Hub setting %s: reply type %s, error %s", key, msg_type, code)
         if msg_type == MSG_NOT_ACKNOWLEDGE:
             return None
         self._versions = versions
-        value = _find_key(_loads(text), "led")
-        return value if value in LED_STATES else None
+        return _find_key(_loads(text), key)
 
-    def set_led(self, state: str, local_address: str | None) -> None:
-        """Change the hub's LED setting (UPDATE_USER_SETTINGS {"led": ...})."""
-        if state not in LED_STATES:
-            raise ValueError(f"Unknown LED state {state!r}")
-        data = {"led": state}
+    def set_setting(self, data: dict[str, Any], local_address: str | None) -> None:
+        """Change hub settings (UPDATE_USER_SETTINGS with only these keys, like the app)."""
         if local_address:
-            self.get_led(local_address)  # refreshes the data versions
+            self.get_setting(next(iter(data)), local_address)  # refreshes the data versions
             frame = build_settings_message(
                 self.mac or "", self.aes_key or "", MSG_UPDATE_USER_SETTINGS, data, self._versions
             )
             try:
                 raw = self._exchange(frame, local_address)
             except OSError as err:
-                _LOGGER.debug("Local LED update failed (%s), using cloud", err)
+                _LOGGER.debug("Local settings update failed (%s), using cloud", err)
             else:
                 try:
                     msg_type, versions, _text, code = parse_reply(raw, self.aes_key or "")
                 except ValueError:
                     return
-                _LOGGER.debug("LED update reply: type %s, error %s", msg_type, code)
+                _LOGGER.debug("Settings update reply: type %s, error %s", msg_type, code)
                 if msg_type == MSG_NOT_ACKNOWLEDGE:
                     if code in BUSY_ERRORS:
                         raise TrustApiError(f"The hub stayed busy, try again later (error {code})")
-                    raise TrustApiError(f"The hub refused the LED setting (error {code})")
+                    raise TrustApiError(f"The hub refused the setting (error {code})")
                 self._versions = versions
                 return
         frame = build_settings_message(
             self.mac or "", self.aes_key or "", MSG_UPDATE_USER_SETTINGS, data, self._versions
         )
+        self._send_cloud(frame)
+
+    def get_led(self, local_address: str | None) -> str | None:
+        value = self.get_setting("led", local_address)
+        return value if value in LED_STATES else None
+
+    def set_led(self, state: str, local_address: str | None) -> None:
+        if state not in LED_STATES:
+            raise ValueError(f"Unknown LED state {state!r}")
+        self.set_setting({"led": state}, local_address)
+
+    def get_device_info(self, local_address: str | None) -> dict[str, Any] | None:
+        """GET_DEVICE_INFO: firmware/hardware/Zigbee versions (LAN only)."""
+        if not local_address:
+            return None
+        frame = build_frame(self.mac or "", 0, b"", MSG_GET_DEVICE_INFO)
+        try:
+            raw = self._exchange(frame, local_address, expect_data=True)
+            msg_type, _versions, text, code = parse_reply(raw, self.aes_key or "")
+        except (OSError, ValueError) as err:
+            _LOGGER.debug("Reading the hub information failed: %s", err)
+            return None
+        _LOGGER.debug("Hub information: reply type %s, error %s", msg_type, code)
+        data = _loads(text)
+        return data if isinstance(data, dict) else None
+
+    def reboot(self, local_address: str | None) -> None:
+        """Restart the hub (REMOTE_REBOOT, as in the app's settings)."""
+        data = {"reboot": "requested", "magic": random.randint(0, 2**31 - 1)}
+        frame = build_settings_message(self.mac or "", self.aes_key or "", MSG_REMOTE_REBOOT, data)
+        if local_address:
+            try:
+                raw = self._exchange(frame, local_address)
+            except OSError as err:
+                _LOGGER.debug("Local restart request failed (%s), using cloud", err)
+            else:
+                if len(raw) > 43 and raw[2] == MSG_NOT_ACKNOWLEDGE:
+                    raise TrustApiError(f"The hub refused the restart (error {raw[43]})")
+                return
         self._send_cloud(frame)
 
     def _send_cloud(self, frame: bytes) -> None:

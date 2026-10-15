@@ -50,7 +50,7 @@ cleanest way is to delete the old integration entry and add it again.
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
-| ICS-2000 hub LED | `switch` on an *ICS-2000* device |
+| ICS-2000 hub | on the hub device: *Hub LED* and *Automatic firmware updates* switches, *Restart hub* button, firmware / Zigbee firmware / Zigbee channel sensors, *Local communication only* |
 
 Zigbee devices that report themselves offline are shown as unavailable. Mains-powered Zigbee devices (bulbs, plugs, built-in
 switches and dimmers) have an *Identify* button: the device blinks for about 3 seconds,
@@ -110,6 +110,21 @@ The *ICS-2000 → Hub LED* switch turns the hub's LED on or off, like the switch
 app's settings. When the hub is reachable on the LAN, the integration reads the current
 setting from the hub; otherwise the change is sent through the cloud and the last value set
 from Home Assistant is shown.
+
+## The hub itself
+
+These come from the hub on the LAN (the same requests the app's settings screen uses) and
+are read at start-up and every 6 hours:
+
+- **Restart hub** button: like *Reboot* in the app's settings, e.g. for an automation when
+  the hub has lost its cloud connection.
+- **Automatic firmware updates** switch: the app's setting; turn it off to keep a firmware
+  version that works for you.
+- **Firmware version**, **Zigbee firmware version**, **Zigbee channel** (diagnostic sensors;
+  the firmware version is also shown on the hub device).
+- **Local communication only**: the app's "force local communication" setting (read only).
+
+Without a connection to the hub on the LAN these show no value.
 
 ## Transitions (fades)
 

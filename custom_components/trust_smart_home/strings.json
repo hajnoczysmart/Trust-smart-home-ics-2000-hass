@@ -91,6 +91,9 @@
       },
       "channel": {
         "name": "Channel {channel}"
+      },
+      "hub_local_only": {
+        "name": "Local communication only"
       }
     },
     "button": {
@@ -111,6 +114,9 @@
       },
       "rule_run": {
         "name": "Run {name}"
+      },
+      "hub_restart": {
+        "name": "Restart hub"
       }
     },
     "sensor": {
@@ -150,6 +156,15 @@
           "low": "Low",
           "high": "High"
         }
+      },
+      "hub_firmware": {
+        "name": "Firmware version"
+      },
+      "hub_zigbee_firmware": {
+        "name": "Zigbee firmware version"
+      },
+      "hub_zigbee_channel": {
+        "name": "Zigbee channel"
       }
     },
     "event": {
@@ -163,6 +178,9 @@
     "switch": {
       "hub_led": {
         "name": "Hub LED"
+      },
+      "hub_firmware_auto_update": {
+        "name": "Automatic firmware updates"
       }
     }
   },

@@ -16,6 +16,8 @@ from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice
 from .const import DOMAIN
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
+from .hub import TrustHubEntity
+from .api import SETTING_FW_UPDATE_DISABLED
 
 
 async def async_setup_entry(
@@ -33,6 +35,7 @@ async def async_setup_entry(
         if dev.description.rule
     ]
     entities.append(TrustHubLed(coordinator))
+    entities.append(TrustFirmwareAutoUpdate(coordinator))
     async_add_entities(entities)
 
 
@@ -116,3 +119,30 @@ class TrustRuleSwitch(TrustEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.send(RULE_INDEX, RULE_DISABLED)
+
+
+class TrustFirmwareAutoUpdate(TrustHubEntity, SwitchEntity):
+    """Automatic firmware updates of the hub (the app's settings switch)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: TrustCoordinator) -> None:
+        super().__init__(coordinator, "firmware_auto_update")
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        disabled = self.hub_value("settings", SETTING_FW_UPDATE_DISABLED)
+        try:
+            return int(disabled) == 0
+        except (TypeError, ValueError):
+            return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_hub_setting(SETTING_FW_UPDATE_DISABLED, 0)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_hub_setting(SETTING_FW_UPDATE_DISABLED, 1)
