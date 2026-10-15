@@ -157,6 +157,8 @@ class TrustLight(TrustEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         spec = self.spec
         effect = kwargs.get(ATTR_EFFECT)
+        # a command to this light ends animations of groups it is in (and vice versa)
+        await self.coordinator.async_stop_animations(self._animation_ids(), keep=self)
         await self._cancel_fade()
         if self._police_task is not None and effect != EFFECT_POLICE:
             # any other command ends the flashing; "off" also restores the colour
@@ -223,6 +225,7 @@ class TrustLight(TrustEntity, LightEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         spec = self.spec
+        await self.coordinator.async_stop_animations(self._animation_ids(), keep=self)
         await self._stop_police(restore=False)
         await self._cancel_fade()
         transition = kwargs.get(ATTR_TRANSITION)
@@ -241,6 +244,7 @@ class TrustLight(TrustEntity, LightEntity):
     # ---- transitions -------------------------------------------------------
 
     def _start_fade(self, start: int, end: int, duration: float, off_at_end: bool) -> None:
+        self.coordinator.animations[self] = self._animation_ids()
         self._fade_task = self.hass.async_create_background_task(
             self._fade(start, end, duration, off_at_end), f"trust_smart_home fade {self.trust.id}"
         )
@@ -260,9 +264,24 @@ class TrustLight(TrustEntity, LightEntity):
         except HomeAssistantError as err:
             _LOGGER.warning("Transition on %s stopped: %s", self.trust.name, err)
         self._fade_task = None
+        self._animation_done()
+
+    def _animation_ids(self) -> set[int]:
+        return {self.trust.id, *self.trust.members}
+
+    def _animation_done(self) -> None:
+        if self._police_task is None and self._fade_task is None:
+            self.coordinator.animations.pop(self, None)
+
+    async def async_stop_animation(self) -> None:
+        """Called by the coordinator when another light's command overlaps."""
+        await self._stop_police(restore=False)
+        await self._cancel_fade()
+        self.async_write_ha_state()
 
     async def _cancel_fade(self) -> None:
         task, self._fade_task = self._fade_task, None
+        self._animation_done()
         if task is None or task.done():
             return
         task.cancel()
@@ -295,6 +314,7 @@ class TrustLight(TrustEntity, LightEntity):
             self._police_restore = (spec.hs_index, self.value(spec.hs_index) or 0)
         else:
             self._police_restore = None
+        self.coordinator.animations[self] = self._animation_ids()
         self._police_task = self.hass.async_create_background_task(
             self._police_loop(), f"trust_smart_home police {self.trust.id}"
         )
@@ -314,10 +334,12 @@ class TrustLight(TrustEntity, LightEntity):
         except HomeAssistantError as err:
             _LOGGER.warning("Police effect on %s stopped: %s", self.trust.name, err)
             self._police_task = None
+            self._animation_done()
             self.async_write_ha_state()
 
     async def _stop_police(self, restore: bool) -> None:
         task, self._police_task = self._police_task, None
+        self._animation_done()
         if task is None:
             return
         task.cancel()

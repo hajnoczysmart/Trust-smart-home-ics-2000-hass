@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from datetime import timedelta
 from typing import Any
 
@@ -25,6 +26,11 @@ from .const import (
     MIN_SCAN_INTERVAL,
     REFRESH_AFTER_COMMAND,
 )
+
+# Seconds after our latest command during which the cloud reporting one of our
+# older commands is treated as a late echo. Later, every change is taken over
+# (so changes made in the app or on the device are never hidden for long).
+ECHO_WINDOW = 60.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +83,13 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         # (entity id, index) -> (value sent, expiry): event entities do not report
         # the change our own command causes
         self.own_changes: dict[tuple[int, int], tuple[int, float]] = {}
+        # (entity id, index) -> values we sent recently, newest last. The cloud
+        # often reports a burst of commands (police effect, fades, quick changes)
+        # one by one, minutes late; a reported value that is one of our *older*
+        # commands is such a late echo and must not overwrite the newest one.
+        self._sent: dict[tuple[int, int], deque[tuple[int, float]]] = {}
+        # running animations (police effect, fades): owner -> affected entity ids
+        self.animations: dict[Any, set[int]] = {}
 
     def is_own_change(self, entity_id: int, index: int, value: int) -> bool:
         """True (once) if this value change was caused by our own command."""
@@ -159,6 +172,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 shown = list(shown)
                 for i, value in enumerate(new):
                     if i >= len(old) or value != old[i]:
+                        if self._is_late_echo(eid, i, value):
+                            continue
                         if i >= len(shown):
                             shown.extend([0] * (i + 1 - len(shown)))
                         shown[i] = value
@@ -213,6 +228,26 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 if derived is not None and status_value(derived, index) is not None:
                     self._write(dev.id, index, derived[index])
 
+    def _is_late_echo(self, eid: int, index: int, value: int) -> bool:
+        """True if `value` is an older command of ours that the cloud reports late."""
+        history = self._sent.get((eid, index))
+        if not history:
+            return False
+        latest, sent_at = history[-1]
+        if value == latest or time.monotonic() - sent_at > ECHO_WINDOW:
+            return False  # the newest command confirmed, or no command of ours lately
+        return any(sent == value for sent, _t in history)
+
+    def _remember_sent(self, eid: int, index: int, value: int) -> None:
+        history = self._sent.setdefault((eid, index), deque(maxlen=128))
+        history.append((value, time.monotonic()))
+
+    async def async_stop_animations(self, entity_ids: set[int], keep: Any = None) -> None:
+        """Stop police effects and fades that touch these entities (except `keep`)."""
+        for owner, ids in list(self.animations.items()):
+            if owner is not keep and ids & entity_ids:
+                await owner.async_stop_animation()
+
     def _write(self, eid: int, index: int, value: int) -> None:
         status = list(self._statuses.get(eid, []))
         if len(status) <= index:
@@ -245,6 +280,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             targets = [device.id, *device.members] if device.kind == "group" else [device.id]
             for eid in targets:
                 self._write(eid, index, int(value))
+                self._remember_sent(eid, index, int(value))
             self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
 
