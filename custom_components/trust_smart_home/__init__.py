@@ -62,8 +62,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 1.6-1.8 put the hub LED on a separate "ICS-2000" device; it now lives on
     # the hub device above, so remove the empty duplicate.
     registry = dr.async_get(hass)
-    if (old := registry.async_get_device(identifiers={(DOMAIN, f"{coordinator.home_id}_hub")})) is not None:
-        registry.async_remove_device(old.id)
+    old_hub = (DOMAIN, f"{coordinator.home_id}_hub")
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        if old_hub in device.identifiers:
+            registry.async_remove_device(device.id)
 
     for dev in devices:
         if not dev.description.supported:
