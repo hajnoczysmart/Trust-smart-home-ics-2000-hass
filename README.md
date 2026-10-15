@@ -32,7 +32,7 @@ cleanest way is to delete the old integration entry and add it again.
 | 433 MHz dimmer, bulb, rotary dimmer | `light`, brightness in 15 steps |
 | Zigbee switch, plug, built-in switch | `switch` |
 | Zigbee dimmer, built-in dimmer, plug dimmer | `light`, brightness |
-| Zigbee bulb: RGB, tunable white, generic | `light`: brightness, colour (HS), colour temperature, effects (colour loop, disco) – whatever the bulb advertises |
+| Zigbee bulb: RGB, tunable white, generic | `light`: brightness, colour (HS), colour temperature, effects (colour loop, disco, police) – whatever the bulb advertises |
 | Zigbee light group | `light` for the group with the members' features (colour, colour temperature, effects); its state is derived from the members (on if any member is on) |
 | 433 MHz motor/actuator | `cover`: open / close / stop |
 | 433 MHz actuator with slider | `cover`: open / close / position |
@@ -113,6 +113,11 @@ Zigbee colour bulbs that support it (and groups containing such bulbs) offer the
 effects in Home Assistant's effect list: *colorloop* (slowly cycles through the colours,
 30 s per loop) and *disco*. Choose *off* to stop the effect. These are the same commands
 the app uses in rules; they have not been tried on every bulb yet.
+
+*police* flashes red and blue, once a second. It is done by Home Assistant (one colour
+command per light per second), so it is only offered when the hub's IP address is
+configured. On a group the members flash alternately. Any other command ends it; choosing
+*off* also restores the previous colour.
 
 ## Settings
 
