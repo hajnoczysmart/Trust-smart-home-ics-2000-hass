@@ -165,6 +165,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                         changed.add((eid, i))
                 self._statuses[eid] = shown
             self._reported[eid] = new
+        if changed and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Status changes: %s",
+                ", ".join(f"{e}[{i}]={self._statuses[e][i]}" for e, i in sorted(changed)),
+            )
         for dev in self.devices.values():
             if dev.kind == "group" and dev.members:
                 self._merge_group(dev, changed, first)

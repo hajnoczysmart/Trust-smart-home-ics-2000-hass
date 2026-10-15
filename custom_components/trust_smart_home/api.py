@@ -371,6 +371,7 @@ class TrustClient:
         local_address: str | None = None,
     ) -> None:
         """Send one action; tries the hub on the LAN first when configured."""
+        _LOGGER.debug("Command: %s %s function %s = %s", kind, entity_id, function, value)
         frame = build_command(
             self.mac or "", self.aes_key or "", kind, entity_id, function, int(value)
         )
@@ -391,6 +392,8 @@ class TrustClient:
                         self._send_cloud(frame)
                         return
                     _LOGGER.debug("Hub refused the command (error %s)", reply[43])
+                else:
+                    _LOGGER.debug("Sent on the LAN, reply type %s", reply[2] if len(reply) > 2 else None)
                 return
         self._send_cloud(frame)
 
