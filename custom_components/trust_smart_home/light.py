@@ -66,6 +66,7 @@ async def async_setup_entry(
 class TrustLight(TrustEntity, LightEntity):
     _attr_min_color_temp_kelvin = MIN_KELVIN
     _attr_max_color_temp_kelvin = MAX_KELVIN
+    _attr_effect_list: list[str] | None = None  # as in LightEntity; set when effects exist
 
     def __init__(self, coordinator: TrustCoordinator, device: TrustDevice) -> None:
         super().__init__(coordinator, device)
