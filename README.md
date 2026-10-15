@@ -122,11 +122,12 @@ returns to the brightness from before the fade. Any other command stops a runnin
 
 ## Statuses from the hub (experimental)
 
-When the hub is reachable on the LAN, the integration first tries to read device statuses
-directly from the hub instead of the Trust cloud: faster, always current, and independent of
-the cloud. The app itself never does this, so the request format is an educated guess; if
-the hub does not answer, the integration silently keeps using the cloud. The diagnostics file
-shows which one is used (`local_status`) and the hub's raw answers (`local_status_probe`).
+Configure → *Settings* → *Read states from the hub on the LAN* (off by default): device
+states are then read directly from the hub instead of the Trust cloud. The app itself never
+does this, so the request format is an educated guess; if the hub does not answer, the
+integration keeps using the cloud. Turn it off again if devices stop responding or show
+wrong states. The diagnostics file shows whether it is used (`local_status`) and the hub's
+raw answers (`local_status_probe`), also when the option is off.
 
 ## Light effects
 

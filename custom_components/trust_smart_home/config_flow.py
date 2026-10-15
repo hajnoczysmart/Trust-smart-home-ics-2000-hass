@@ -23,6 +23,7 @@ from .const import (
     BINARY_DEVICE_CLASSES,
     CONF_HOME,
     CONF_MAPPINGS,
+    CONF_LOCAL_STATUS,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -179,13 +180,15 @@ class TrustOptionsFlow(OptionsFlow):
                 title="", data={**self.config_entry.options, **user_input}
             )
         current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        local = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
                         vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
-                    )
+                    ),
+                    vol.Required(CONF_LOCAL_STATUS, default=local): bool,
                 }
             ),
         )

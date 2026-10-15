@@ -13,6 +13,7 @@ ROLE_BINARY_SENSOR = "binary_sensor"
 ROLE_SENSOR = "sensor"
 
 CONF_SCAN_INTERVAL = "scan_interval"  # seconds between status polls
+CONF_LOCAL_STATUS = "local_status"  # read statuses from the hub on the LAN (experimental, off)
 DEFAULT_SCAN_INTERVAL = 3
 MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 60

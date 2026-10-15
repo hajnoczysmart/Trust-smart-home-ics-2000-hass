@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import TrustApiError, TrustAuthError, TrustClient
 from .catalog import TrustDevice, derive_group_status, group_state_indexes, status_value
 from .const import (
+    CONF_LOCAL_STATUS,
     CONF_MAPPINGS,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -116,7 +117,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         """Runs in the executor: LAN first when the hub answers, else the cloud."""
         ids = self._poll_ids()
         host = self.local_address
-        if host and self.local_status is not False:
+        enabled = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
+        if host and enabled and self.local_status is not False:
             entities = [(self.devices[i].kind, i) for i in ids]
             local = self.client.get_statuses_local(entities, host)
             if local:

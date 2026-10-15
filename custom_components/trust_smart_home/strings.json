@@ -64,9 +64,10 @@
       },
       "settings": {
         "title": "Settings",
-        "description": "How often device states are read from the Trust cloud. Default: 3 seconds.",
+        "description": "How often device states are read (default: 3 seconds). Reading states directly from the hub is experimental: turn it off if devices stop responding.",
         "data": {
-          "scan_interval": "Status polling interval (seconds)"
+          "scan_interval": "Status polling interval (seconds)",
+          "local_status": "Read states from the hub on the LAN (experimental)"
         }
       }
     },

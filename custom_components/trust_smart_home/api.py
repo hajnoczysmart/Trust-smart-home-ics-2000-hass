@@ -38,6 +38,7 @@ MSG_ACKNOWLEDGE = 252
 MSG_NOT_ACKNOWLEDGE = 253
 BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
 BUSY_RETRIES = 20  # as the app's local transport
+LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
 LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
 ENTITY_KINDS = ("module", "group", "scene", "scenario")  # scenario = app rule
@@ -488,7 +489,10 @@ class TrustClient:
     ) -> dict[int, list[int]]:
         """Statuses from the hub; empty when the hub does not answer the first one."""
         out: dict[int, list[int]] = {}
+        deadline = time.monotonic() + LOCAL_STATUS_BUDGET
         for n, (kind, entity_id) in enumerate(entities):
+            if time.monotonic() > deadline:
+                break  # the rest comes from the cloud this time
             status = self.get_status_local(kind, entity_id, local_address)
             if status is None:
                 if n == 0:
