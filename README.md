@@ -32,8 +32,8 @@ cleanest way is to delete the old integration entry and add it again.
 | 433 MHz dimmer, bulb, rotary dimmer | `light`, brightness in 15 steps |
 | Zigbee switch, plug, built-in switch | `switch` |
 | Zigbee dimmer, built-in dimmer, plug dimmer | `light`, brightness |
-| Zigbee bulb: RGB, tunable white, generic | `light`: brightness, colour (HS), colour temperature – whatever the bulb advertises |
-| Zigbee light group | `light` for the group; its state is derived from the members (on if any member is on) |
+| Zigbee bulb: RGB, tunable white, generic | `light`: brightness, colour (HS), colour temperature, effects (colour loop, disco) – whatever the bulb advertises |
+| Zigbee light group | `light` for the group with the members' features (colour, colour temperature, effects); its state is derived from the members (on if any member is on) |
 | 433 MHz motor/actuator | `cover`: open / close / stop |
 | 433 MHz actuator with slider | `cover`: open / close / position |
 | Somfy RTS, Brel | `cover`: open / close / stop ("my") |
@@ -48,7 +48,7 @@ cleanest way is to delete the old integration entry and add it again.
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
-| ICS-2000 hub LED (experimental) | `select`: on / off / disco, on an *ICS-2000* device |
+| ICS-2000 hub LED | `switch` on an *ICS-2000* device |
 
 Zigbee devices that report themselves offline are shown as unavailable. Mains-powered Zigbee devices (bulbs, plugs, built-in
 switches and dimmers) have an *Identify* button: the device blinks for about 3 seconds,
@@ -100,15 +100,19 @@ Rules (automations) created in the Trust Smart Home app appear on a *Rules* devi
 
 Internal rules of the security system are hidden, as in the app.
 
-## Hub LED (experimental)
+## Hub LED
 
-The *ICS-2000 → Hub LED* select changes the hub's LED setting (on, off or disco), the
-same setting as in the app's settings. Unlike device commands, this is a settings message
-that has to carry the hub's current data versions, so it works best with the hub's IP
-address configured: the integration then reads the current setting and the versions from
-the hub first. Without an IP address it is sent through the cloud and the last value set
-from Home Assistant is shown. If the hub refuses the change, an error is shown; with
-debug logging enabled, the hub's replies are logged.
+The *ICS-2000 → Hub LED* switch turns the hub's LED on or off, like the switch in the
+app's settings. With the hub's IP address configured, the integration reads the current
+setting from the hub; without it, the change is sent through the cloud and the last value
+set from Home Assistant is shown.
+
+## Light effects
+
+Zigbee colour bulbs that support it (and groups containing such bulbs) offer the app's two
+effects in Home Assistant's effect list: *colorloop* (slowly cycles through the colours,
+30 s per loop) and *disco*. Choose *off* to stop the effect. These are the same commands
+the app uses in rules; they have not been tried on every bulb yet.
 
 ## Settings
 

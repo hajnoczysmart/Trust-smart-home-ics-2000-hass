@@ -1,16 +1,19 @@
-"""Switches: 433 MHz switches, Zigbee sockets and built-in switches, and
-enabling/disabling the rules made in the Trust Smart Home app."""
+"""Switches: 433 MHz switches, Zigbee sockets and built-in switches,
+enabling/disabling the rules made in the Trust Smart Home app, and the hub LED."""
 from __future__ import annotations
 
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
 
@@ -29,7 +32,51 @@ async def async_setup_entry(
         for dev in coordinator.devices.values()
         if dev.description.rule
     ]
+    entities.append(TrustHubLed(coordinator))
     async_add_entities(entities)
+
+
+class TrustHubLed(SwitchEntity, RestoreEntity):
+    """The hub's LED setting, as the switch in the app's settings.
+
+    The hub is asked for the current setting when its LAN address is
+    configured; otherwise the last value set from Home Assistant is shown.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "hub_led"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: TrustCoordinator) -> None:
+        self.coordinator = coordinator
+        home = coordinator.home_id
+        self._attr_unique_id = f"{home}_hub_led_switch"
+        self._attr_is_on = None
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{home}_hub")},
+            name="ICS-2000",
+            manufacturer=MANUFACTURER,
+            model="ICS-2000 hub",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        state = await self.coordinator.async_read_led()
+        if state is not None:
+            self._attr_is_on = state != "off"
+        elif (last := await self.async_get_last_state()) is not None and last.state in ("on", "off"):
+            self._attr_is_on = last.state == "on"
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_led("on")
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_led("off")
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class TrustSwitch(TrustEntity, SwitchEntity):

@@ -186,6 +186,39 @@ class LightSpec:
     ct_index: int | None = None  # mireds
     hs_index: int | None = None
     pointer_index: int | None = None
+    effect_index: int | None = None  # ColorEffects: colour loop / disco
+
+
+# ZigbeeLight ColorEffects (index 11), ColorEffectValue:
+# bit 29 type (0 colour loop, 1 disco), bit 28 direction, bits 16-27 duration,
+# bits 0-15 start hue (0 = from the current colour). Duration 0 stops the effect.
+EFFECT_INDEX = 11
+EFFECT_COLORLOOP = "colorloop"
+EFFECT_DISCO = "disco"
+_EFFECT_TYPE = {EFFECT_COLORLOOP: 0, EFFECT_DISCO: 1}
+# Defaults of the app's effect editors: colour loop 30 s, disco speed 1-5
+# (the app uses the reversed direction for disco).
+_EFFECT_DEFAULTS = {EFFECT_COLORLOOP: (0, 30), EFFECT_DISCO: (1, 3)}
+
+
+def effect_value(effect: str) -> int:
+    """Start value for an effect."""
+    direction, duration = _EFFECT_DEFAULTS[effect]
+    return (_EFFECT_TYPE[effect] << 29) | (direction << 28) | (duration << 16)
+
+
+def effect_stop_value(effect: str | None) -> int:
+    """Stop value (duration 0) for the given (or the colour loop) effect."""
+    return _EFFECT_TYPE.get(effect or EFFECT_COLORLOOP, 0) << 29
+
+
+def decode_effect(value: int | None) -> str | None:
+    """Running effect, "" when none runs, None when unknown."""
+    if value is None:
+        return None
+    if (value >> 16) & 0xFFF == 0:
+        return ""
+    return EFFECT_DISCO if (value >> 29) & 1 else EFFECT_COLORLOOP
 
 
 @dataclass(frozen=True)
@@ -419,6 +452,7 @@ def _zigbee_light(dev: TrustDevice, functions: set[int] | None = None) -> LightS
         ct_index=9 if 9 in fns else None,
         hs_index=8 if 8 in fns else None,
         pointer_index=10 if 10 in fns else None,
+        effect_index=EFFECT_INDEX if EFFECT_INDEX in fns else None,
     )
 
 
@@ -589,7 +623,11 @@ def group_state_indexes(desc: Description) -> tuple[int | None, list[int]]:
     """(on/off index, other indexes) a group derives from its members."""
     if desc.light is not None:
         spec = desc.light
-        others = [i for i in (spec.dim_index, spec.hs_index, spec.ct_index, spec.pointer_index) if i is not None]
+        others = [
+            i
+            for i in (spec.dim_index, spec.hs_index, spec.ct_index, spec.pointer_index, spec.effect_index)
+            if i is not None
+        ]
         return spec.on_index, others
     if desc.switch is not None:
         return desc.switch.index, []

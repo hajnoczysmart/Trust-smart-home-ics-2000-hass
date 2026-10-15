@@ -6,19 +6,27 @@ from typing import Any
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_EFFECT,
     ATTR_HS_COLOR,
+    EFFECT_OFF,
     ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .catalog import (
+    EFFECT_COLORLOOP,
+    EFFECT_DISCO,
     LightSpec,
     TrustDevice,
     brightness_to_level,
+    decode_effect,
     decode_hs,
+    effect_stop_value,
+    effect_value,
     encode_hs,
     kelvin_to_mired,
     level_to_brightness,
@@ -60,6 +68,9 @@ class TrustLight(TrustEntity, LightEntity):
         if not modes:
             modes.add(ColorMode.BRIGHTNESS if spec.dim_index is not None else ColorMode.ONOFF)
         self._attr_supported_color_modes = modes
+        if spec.effect_index is not None:
+            self._attr_supported_features = LightEntityFeature.EFFECT
+            self._attr_effect_list = [EFFECT_OFF, EFFECT_COLORLOOP, EFFECT_DISCO]
 
     # ---- state -----------------------------------------------------------
 
@@ -96,11 +107,24 @@ class TrustLight(TrustEntity, LightEntity):
             return None
         return max(MIN_KELVIN, min(MAX_KELVIN, kelvin))
 
+    @property
+    def effect(self) -> str | None:
+        if self.spec.effect_index is None:
+            return None
+        running = decode_effect(self.value(self.spec.effect_index))
+        if running is None:
+            return None
+        return running or EFFECT_OFF
+
     # ---- commands --------------------------------------------------------
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         spec = self.spec
-        attrs = [k for k in (ATTR_BRIGHTNESS, ATTR_HS_COLOR, ATTR_COLOR_TEMP_KELVIN) if k in kwargs]
+        attrs = [
+            k
+            for k in (ATTR_BRIGHTNESS, ATTR_HS_COLOR, ATTR_COLOR_TEMP_KELVIN, ATTR_EFFECT)
+            if k in kwargs
+        ]
         # Zigbee lights may ignore level/colour while off, so switch on first.
         if not attrs or not self.is_on or spec.dim_index is None:
             await self.send(spec.on_index, 1)
@@ -111,6 +135,13 @@ class TrustLight(TrustEntity, LightEntity):
             await self.send(spec.ct_index, kelvin_to_mired(kwargs[ATTR_COLOR_TEMP_KELVIN]))
         if ATTR_BRIGHTNESS in kwargs and spec.dim_index is not None:
             await self.send(spec.dim_index, brightness_to_level(kwargs[ATTR_BRIGHTNESS], spec))
+        if ATTR_EFFECT in kwargs and spec.effect_index is not None:
+            effect = kwargs[ATTR_EFFECT]
+            if effect in (EFFECT_COLORLOOP, EFFECT_DISCO):
+                await self.send(spec.effect_index, effect_value(effect))
+            elif effect == EFFECT_OFF:
+                current = decode_effect(self.value(spec.effect_index))
+                await self.send(spec.effect_index, effect_stop_value(current or None))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.send(self.spec.on_index, 0)

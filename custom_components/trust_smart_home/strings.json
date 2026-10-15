@@ -159,14 +159,9 @@
         "name": "Arm / disarm"
       }
     },
-    "select": {
+    "switch": {
       "hub_led": {
-        "name": "Hub LED",
-        "state": {
-          "on": "On",
-          "off": "Off",
-          "disco": "Disco"
-        }
+        "name": "Hub LED"
       }
     }
   }
