@@ -43,7 +43,9 @@ from .entity import TrustEntity
 _LOGGER = logging.getLogger(__name__)
 
 # ZigbeeLight colour pointer (index 10): which colour attribute was set last
+# (ColorPointer: 5 xy, 6 hue, 7 saturation, 9 colour temperature, 12 hue+saturation)
 POINTER_COLOR_TEMP = 9
+POINTER_HS = 12
 
 # "police": red/blue flashing done by the integration (not a bulb effect).
 # One colour command per light per step, so it is only offered when the hub is
@@ -199,8 +201,13 @@ class TrustLight(TrustEntity, LightEntity):
         if ATTR_HS_COLOR in kwargs and spec.hs_index is not None:
             hue, sat = kwargs[ATTR_HS_COLOR]
             await self.send(spec.hs_index, encode_hs(hue, sat))
+            if spec.pointer_index is not None:
+                # the bulb now shows this colour; the cloud reports that late or never
+                self.coordinator.set_local(self.trust, spec.pointer_index, POINTER_HS)
         if ATTR_COLOR_TEMP_KELVIN in kwargs and spec.ct_index is not None:
             await self.send(spec.ct_index, kelvin_to_mired(kwargs[ATTR_COLOR_TEMP_KELVIN]))
+            if spec.pointer_index is not None:
+                self.coordinator.set_local(self.trust, spec.pointer_index, POINTER_COLOR_TEMP)
         if ATTR_BRIGHTNESS in kwargs and spec.dim_index is not None:
             await self.send(spec.dim_index, brightness_to_level(kwargs[ATTR_BRIGHTNESS], spec))
         if effect == EFFECT_POLICE and EFFECT_POLICE in (self._attr_effect_list or []):
@@ -350,4 +357,7 @@ class TrustLight(TrustEntity, LightEntity):
         if restore and self._police_restore is not None:
             index, value = self._police_restore
             await self.send(index, value)
+            if self.spec.pointer_index is not None:
+                pointer = POINTER_COLOR_TEMP if index == self.spec.ct_index else POINTER_HS
+                self.coordinator.set_local(self.trust, self.spec.pointer_index, pointer)
         self._police_restore = None

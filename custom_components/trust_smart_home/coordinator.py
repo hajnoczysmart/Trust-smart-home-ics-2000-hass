@@ -242,6 +242,16 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         history = self._sent.setdefault((eid, index), deque(maxlen=128))
         history.append((value, time.monotonic()))
 
+    @callback
+    def set_local(self, device: TrustDevice, index: int, value: int) -> None:
+        """Change a shown value without sending anything (the hub sets it itself,
+        e.g. the colour pointer after a colour command), for a group also its members."""
+        targets = [device.id, *device.members] if device.kind == "group" else [device.id]
+        for eid in targets:
+            self._write(eid, index, int(value))
+            self._remember_sent(eid, index, int(value))
+        self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
+
     async def async_stop_animations(self, entity_ids: set[int], keep: Any = None) -> None:
         """Stop police effects and fades that touch these entities (except `keep`)."""
         for owner, ids in list(self.animations.items()):
