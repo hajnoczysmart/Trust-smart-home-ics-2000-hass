@@ -137,11 +137,15 @@ class TrustLight(TrustEntity, LightEntity):
             await self.send(spec.dim_index, brightness_to_level(kwargs[ATTR_BRIGHTNESS], spec))
         if ATTR_EFFECT in kwargs and spec.effect_index is not None:
             effect = kwargs[ATTR_EFFECT]
+            # The bulb keeps an effect running until that effect type is stopped,
+            # so stop the other one first, and "off" stops both.
             if effect in (EFFECT_COLORLOOP, EFFECT_DISCO):
+                other = EFFECT_DISCO if effect == EFFECT_COLORLOOP else EFFECT_COLORLOOP
+                await self.send(spec.effect_index, effect_stop_value(other))
                 await self.send(spec.effect_index, effect_value(effect))
             elif effect == EFFECT_OFF:
-                current = decode_effect(self.value(spec.effect_index))
-                await self.send(spec.effect_index, effect_stop_value(current or None))
+                for running in (EFFECT_DISCO, EFFECT_COLORLOOP):
+                    await self.send(spec.effect_index, effect_stop_value(running))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.send(self.spec.on_index, 0)
