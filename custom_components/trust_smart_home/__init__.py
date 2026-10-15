@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
+from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
@@ -43,6 +43,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Cannot reach the Trust cloud: {err}") from err
 
     coordinator = TrustCoordinator(hass, entry, client, devices)
+    if not entry.data.get(CONF_IP_ADDRESS):
+        # No address entered: find the hub on the LAN by its MAC (from the account)
+        coordinator.discovered_address = await hass.async_add_executor_job(client.discover)
+        if coordinator.discovered_address:
+            _LOGGER.info("Found the ICS-2000 at %s", coordinator.discovered_address)
+        else:
+            _LOGGER.info("ICS-2000 not found on the LAN; using the Trust cloud only")
     await coordinator.async_config_entry_first_refresh()
 
     dr.async_get(hass).async_get_or_create(
@@ -52,6 +59,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         model="ICS-2000",
         name=client.home_name or "ICS-2000",
     )
+    # 1.6-1.8 put the hub LED on a separate "ICS-2000" device; it now lives on
+    # the hub device above, so remove the empty duplicate.
+    registry = dr.async_get(hass)
+    if (old := registry.async_get_device(identifiers={(DOMAIN, f"{coordinator.home_id}_hub")})) is not None:
+        registry.async_remove_device(old.id)
 
     for dev in devices:
         if not dev.description.supported:

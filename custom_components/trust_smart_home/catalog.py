@@ -283,6 +283,21 @@ class EventSpec:
             return name
         return f"channel_{index + 1}_{name}"
 
+    def trigger(self, index: int, raw: int) -> tuple[str, str] | None:
+        """(trigger type, subtype) for a device trigger, e.g. ("on", "channel_2")."""
+        name = dict(self.values).get(raw)
+        if name is None:
+            return None
+        return name, (f"channel_{index + 1}" if len(self.indexes) > 1 else "button")
+
+    @property
+    def triggers(self) -> list[tuple[str, str]]:
+        return [
+            self.trigger(i, raw)  # type: ignore[misc]
+            for i in self.indexes
+            for raw, _ in self.values
+        ]
+
     @property
     def event_types(self) -> list[str]:
         return [

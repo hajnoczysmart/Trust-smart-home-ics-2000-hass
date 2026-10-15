@@ -17,9 +17,11 @@ byte-identical to it.
    `https://github.com/hajnoczysmart/Trust-smart-home-ics-2000-hass`, type: *Integration*.
 2. Find *Trust Smart Home (ICS-2000)* in HACS → Download → restart Home Assistant.
 3. Settings → Devices & services → Add integration → *Trust Smart Home*.
-4. Enter the e-mail address and password of your Trust Smart Home app account. If you also
-   enter the hub's IP address, commands are sent over your local network (UDP 2012), falling
-   back to the cloud automatically.
+4. Enter the e-mail address and password of your Trust Smart Home app account. The hub is
+   found on your local network automatically (like the app finds it, by its MAC address from
+   your account), and commands are then sent over the LAN (UDP 2012), falling back to the
+   cloud automatically. Enter the hub's IP address only if it is not found (for example when
+   Home Assistant runs in a container without host networking).
 
 **Upgrading from v0.x:** the settings are compatible, but the entity IDs changed. The
 cleanest way is to delete the old integration entry and add it again.
@@ -82,6 +84,8 @@ This gives three things:
 - **"Channel N" binary sensor:** on if the "on" button was pressed last.
 - **"Button press" event:** event type `channel_<N>_on` or `channel_<N>_off`. In automations,
   use an *Event entity* trigger, or watch the state change of its `event_type` attribute.
+- **Device triggers:** in the automation editor choose *Device* → the remote → e.g.
+  *"Channel 2" ON pressed*.
 - **"Channel N on/off" buttons:** the hub transmits as the remote, so 433 MHz devices that
   were paired directly with the remote can be switched too. For the 16-channel remote these
   are disabled by default (enable them in the entity settings).
@@ -103,9 +107,26 @@ Internal rules of the security system are hidden, as in the app.
 ## Hub LED
 
 The *ICS-2000 → Hub LED* switch turns the hub's LED on or off, like the switch in the
-app's settings. With the hub's IP address configured, the integration reads the current
-setting from the hub; without it, the change is sent through the cloud and the last value
-set from Home Assistant is shown.
+app's settings. When the hub is reachable on the LAN, the integration reads the current
+setting from the hub; otherwise the change is sent through the cloud and the last value set
+from Home Assistant is shown.
+
+## Transitions (fades)
+
+Dimmable lights support Home Assistant's *transition*: for example
+`light.turn_on` with `brightness_pct: 100` and `transition: 1800` makes a 30-minute wake-up
+light, and `light.turn_off` with `transition: 600` dims out over 10 minutes. The bulbs have
+no fade of their own, so the integration steps the brightness (at most two steps a second on
+the LAN, one every 3 seconds through the cloud). After a fade-out, the next plain *turn on*
+returns to the brightness from before the fade. Any other command stops a running fade.
+
+## Statuses from the hub (experimental)
+
+When the hub is reachable on the LAN, the integration first tries to read device statuses
+directly from the hub instead of the Trust cloud: faster, always current, and independent of
+the cloud. The app itself never does this, so the request format is an educated guess; if
+the hub does not answer, the integration silently keeps using the cloud. The diagnostics file
+shows which one is used (`local_status`) and the hub's raw answers (`local_status_probe`).
 
 ## Light effects
 
@@ -115,8 +136,7 @@ effects in Home Assistant's effect list: *colorloop* (slowly cycles through the 
 the app uses in rules; they have not been tried on every bulb yet.
 
 *police* flashes red and blue, once a second. It is done by Home Assistant (one colour
-command per light per second), so it is only offered when the hub's IP address is
-configured. On a group the members flash alternately. Any other command ends it; choosing
+command per light per second), so it is only offered when the hub is reachable on the LAN. On a group the members flash alternately. Any other command ends it; choosing
 *off* also restores the previous colour.
 
 ## Settings

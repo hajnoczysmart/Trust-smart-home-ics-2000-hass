@@ -10,6 +10,7 @@ from homeassistant.components.light import (
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_HS_COLOR,
+    ATTR_TRANSITION,
     EFFECT_OFF,
     ColorMode,
     LightEntity,
@@ -51,6 +52,11 @@ EFFECT_POLICE = "police"
 POLICE_INTERVAL = 1.0  # seconds per step
 POLICE_HUES = (0, 240)  # red, blue
 
+# Transitions (fades) are done by stepping the brightness: at most one step per
+# FADE_STEP_LOCAL seconds on the LAN, FADE_STEP_CLOUD through the cloud.
+FADE_STEP_LOCAL = 0.5
+FADE_STEP_CLOUD = 3.0
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -82,15 +88,21 @@ class TrustLight(TrustEntity, LightEntity):
             modes.add(ColorMode.BRIGHTNESS if spec.dim_index is not None else ColorMode.ONOFF)
         self._attr_supported_color_modes = modes
         self._police_task: asyncio.Task | None = None
+        self._fade_task: asyncio.Task | None = None
+        self._restore_level: int | None = None  # level before a fade-out
         self._police_restore: tuple[int, int] | None = None  # (index, value)
         effects: list[str] = []
         if spec.effect_index is not None:
             effects += [EFFECT_COLORLOOP, EFFECT_DISCO]
         if spec.hs_index is not None and coordinator.local_address:
             effects.append(EFFECT_POLICE)
+        features = LightEntityFeature(0)
+        if spec.dim_index is not None:
+            features |= LightEntityFeature.TRANSITION
         if effects:
-            self._attr_supported_features = LightEntityFeature.EFFECT
+            features |= LightEntityFeature.EFFECT
             self._attr_effect_list = [EFFECT_OFF, *effects]
+        self._attr_supported_features = features
 
     # ---- state -----------------------------------------------------------
 
@@ -145,17 +157,42 @@ class TrustLight(TrustEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         spec = self.spec
         effect = kwargs.get(ATTR_EFFECT)
+        await self._cancel_fade()
         if self._police_task is not None and effect != EFFECT_POLICE:
             # any other command ends the flashing; "off" also restores the colour
             colour = ATTR_HS_COLOR in kwargs or ATTR_COLOR_TEMP_KELVIN in kwargs
             await self._stop_police(restore=effect == EFFECT_OFF and not colour)
+        switched_on = False
+        fade: tuple[int, int, float] | None = None
+        transition = kwargs.get(ATTR_TRANSITION)
+        if transition and transition > 0 and spec.dim_index is not None:
+            if ATTR_BRIGHTNESS in kwargs:
+                target = brightness_to_level(kwargs.pop(ATTR_BRIGHTNESS), spec)
+            else:
+                current = self.value(spec.dim_index) if self.is_on else None
+                target = self._restore_level or (current if current and current > 0 else spec.dim_max)
+            if not self.is_on:
+                # start dark, then fade up
+                await self.send(spec.dim_index, spec.dim_min)
+                await self.send(spec.on_index, 1)
+                switched_on = True
+                start = spec.dim_min
+            else:
+                start = self.value(spec.dim_index) or spec.dim_min
+            fade = (start, target, float(transition))
+        elif ATTR_BRIGHTNESS not in kwargs and self._restore_level and not self.is_on:
+            # back to the brightness from before a fade-out
+            kwargs[ATTR_BRIGHTNESS] = level_to_brightness(self._restore_level, spec)
+        self._restore_level = None
         attrs = [
             k
             for k in (ATTR_BRIGHTNESS, ATTR_HS_COLOR, ATTR_COLOR_TEMP_KELVIN, ATTR_EFFECT)
             if k in kwargs
         ]
         # Zigbee lights may ignore level/colour while off, so switch on first.
-        if not attrs or not self.is_on or spec.dim_index is None:
+        if not switched_on and (
+            (not attrs and fade is None) or not self.is_on or spec.dim_index is None
+        ):
             await self.send(spec.on_index, 1)
         if ATTR_HS_COLOR in kwargs and spec.hs_index is not None:
             hue, sat = kwargs[ATTR_HS_COLOR]
@@ -181,13 +218,58 @@ class TrustLight(TrustEntity, LightEntity):
                 for running in (EFFECT_DISCO, EFFECT_COLORLOOP):
                     await self.send(spec.effect_index, effect_stop_value(running))
 
+        if fade is not None:
+            self._start_fade(*fade, off_at_end=False)
+
     async def async_turn_off(self, **kwargs: Any) -> None:
+        spec = self.spec
         await self._stop_police(restore=False)
-        await self.send(self.spec.on_index, 0)
+        await self._cancel_fade()
+        transition = kwargs.get(ATTR_TRANSITION)
+        level = self.value(spec.dim_index) if spec.dim_index is not None else None
+        if transition and transition > 0 and self.is_on and level and level > spec.dim_min:
+            self._restore_level = level
+            self._start_fade(level, spec.dim_min, float(transition), off_at_end=True)
+            return
+        await self.send(spec.on_index, 0)
 
     async def async_will_remove_from_hass(self) -> None:
         await self._stop_police(restore=False)
+        await self._cancel_fade()
         await super().async_will_remove_from_hass()
+
+    # ---- transitions -------------------------------------------------------
+
+    def _start_fade(self, start: int, end: int, duration: float, off_at_end: bool) -> None:
+        self._fade_task = self.hass.async_create_background_task(
+            self._fade(start, end, duration, off_at_end), f"trust_smart_home fade {self.trust.id}"
+        )
+
+    async def _fade(self, start: int, end: int, duration: float, off_at_end: bool) -> None:
+        spec = self.spec
+        assert spec.dim_index is not None
+        min_step = FADE_STEP_LOCAL if self.coordinator.local_address else FADE_STEP_CLOUD
+        steps = max(1, min(abs(end - start), int(duration / min_step)))
+        try:
+            for i in range(1, steps + 1):
+                await asyncio.sleep(duration / steps)
+                level = round(start + (end - start) * i / steps)
+                await self.coordinator.async_send(self.trust, spec.dim_index, level)
+            if off_at_end:
+                await self.coordinator.async_send(self.trust, spec.on_index, 0)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Transition on %s stopped: %s", self.trust.name, err)
+        self._fade_task = None
+
+    async def _cancel_fade(self) -> None:
+        task, self._fade_task = self._fade_task, None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     # ---- police effect ---------------------------------------------------
 

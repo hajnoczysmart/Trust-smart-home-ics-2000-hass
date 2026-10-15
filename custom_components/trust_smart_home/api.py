@@ -30,8 +30,10 @@ LOCAL_PORT = 2012
 FRAME_MAGIC = 653213
 # MessageType values from the app
 MSG_CONTROL_ENTITY = 128
+MSG_ANNOUNCEMENT = 3  # the app's LAN discovery broadcast
 MSG_UPDATE_USER_SETTINGS = 17
 MSG_GET_USER_SETTINGS = 18
+MSG_GET_ENTITY_STATUS = 132  # not used by the app itself (it reads statuses from the cloud)
 MSG_ACKNOWLEDGE = 252
 MSG_NOT_ACKNOWLEDGE = 253
 BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
@@ -417,6 +419,112 @@ class TrustClient:
             return reply
         finally:
             sock.close()
+
+    # ---- finding the hub on the LAN ------------------------------------------
+
+    def discover(self, timeout: float = 3.0) -> str | None:
+        """The hub's IP address, found like the app does it.
+
+        The app broadcasts an ANNOUNCEMENT (frame 254, {"SID": random}) for its
+        hub's MAC to port 2012; the hub answers, and the answer's source is
+        its address. The MAC comes from the Trust account, so nothing has to be
+        entered. Returns None when no hub answers (e.g. Home Assistant runs in
+        a container without host networking).
+        """
+        if not self.mac or not self.aes_key:
+            return None
+        mac = bytes.fromhex(self.mac.replace(":", "").replace("-", ""))[:6]
+        payload = encrypt(json.dumps({"SID": format(random.getrandbits(31), "x")}), self.aes_key)
+        frame = bytearray(build_frame(self.mac, 0, payload, MSG_ANNOUNCEMENT))
+        frame[0] = 254  # frame number used by the app for announcements
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(0.5)
+            deadline = time.monotonic() + timeout
+            sock.sendto(bytes(frame), ("255.255.255.255", LOCAL_PORT))
+            while time.monotonic() < deadline:
+                try:
+                    reply, addr = sock.recvfrom(8192)
+                except socket.timeout:
+                    continue
+                if len(reply) >= 9 and reply[3:9] == mac and addr[1] == LOCAL_PORT:
+                    return str(addr[0])
+        except OSError as err:
+            _LOGGER.debug("Hub discovery failed: %s", err)
+        finally:
+            sock.close()
+        return None
+
+    # ---- statuses from the hub on the LAN (experimental) -------------------
+
+    def get_status_local(self, kind: str, entity_id: int, local_address: str) -> list[int] | None:
+        """One entity's function values asked from the hub (None if not answered).
+
+        The app never does this, so the request layout is a guess modelled on
+        the control message; the answer is expected in the cloud's status
+        layout ({"module": {"functions": [...]}}).
+        """
+        frame = build_frame(
+            self.mac or "",
+            entity_id,
+            encrypt(json.dumps({kind: {"id": entity_id}}), self.aes_key or ""),
+            MSG_GET_ENTITY_STATUS,
+        )
+        try:
+            raw = self._exchange(frame, local_address, expect_data=True)
+            msg_type, _versions, text, _code = parse_reply(raw, self.aes_key or "")
+        except (OSError, ValueError):
+            return None
+        if msg_type == MSG_NOT_ACKNOWLEDGE:
+            return None
+        functions = _find_key(_loads(text), "functions")
+        if not isinstance(functions, list):
+            return None
+        return [_as_int(v) for v in functions[:256]]
+
+    def get_statuses_local(
+        self, entities: list[tuple[str, int]], local_address: str
+    ) -> dict[int, list[int]]:
+        """Statuses from the hub; empty when the hub does not answer the first one."""
+        out: dict[int, list[int]] = {}
+        for n, (kind, entity_id) in enumerate(entities):
+            status = self.get_status_local(kind, entity_id, local_address)
+            if status is None:
+                if n == 0:
+                    return {}
+                continue
+            out[entity_id] = status
+        return out
+
+    def probe_local_status(self, kind: str, entity_id: int, local_address: str) -> list[dict]:
+        """Raw replies to a few status-request layouts, for the diagnostics file."""
+        variants = [
+            ("kind_id", {kind: {"id": entity_id}}),
+            ("id", {"id": entity_id}),
+            ("empty", {}),
+        ]
+        results: list[dict] = []
+        for name, data in variants:
+            frame = build_frame(
+                self.mac or "", entity_id, encrypt(json.dumps(data), self.aes_key or ""),
+                MSG_GET_ENTITY_STATUS,
+            )
+            try:
+                raw = self._exchange(frame, local_address, expect_data=True)
+                msg_type, _v, text, code = parse_reply(raw, self.aes_key or "")
+                results.append(
+                    {
+                        "request": name,
+                        "reply_type": msg_type,
+                        "error": code,
+                        "segment": raw[1] if len(raw) > 1 else None,
+                        "data": (text or "")[:1500],
+                    }
+                )
+            except (OSError, ValueError) as err:
+                results.append({"request": name, "failed": f"{type(err).__name__}: {err}"})
+        return results
 
     # ---- hub settings (experimental) -----------------------------------------
 

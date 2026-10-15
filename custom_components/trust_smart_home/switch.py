@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
 
@@ -53,12 +53,8 @@ class TrustHubLed(SwitchEntity, RestoreEntity):
         home = coordinator.home_id
         self._attr_unique_id = f"{home}_hub_led_switch"
         self._attr_is_on = None
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{home}_hub")},
-            name="ICS-2000",
-            manufacturer=MANUFACTURER,
-            model="ICS-2000 hub",
-        )
+        # the hub device created at set-up (identified by the hub's MAC)
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.mac)})
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

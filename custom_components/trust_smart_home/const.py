@@ -18,6 +18,9 @@ MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 60
 REFRESH_AFTER_COMMAND = 2.0  # seconds
 
+# Fired on the event bus for every button press (used by device triggers)
+EVENT_PRESS = f"{DOMAIN}_press"
+
 PLATFORMS = [
     "alarm_control_panel",
     "binary_sensor",

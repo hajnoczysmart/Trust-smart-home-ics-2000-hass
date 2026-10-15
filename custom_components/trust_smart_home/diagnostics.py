@@ -34,6 +34,32 @@ async def async_get_config_entry_diagnostics(
         return result
     result["loaded"] = True
     result["local_control"] = coordinator.local_address is not None
+    result["hub_address_found_automatically"] = coordinator.discovered_address is not None
+    result["local_status"] = coordinator.local_status
+    host = coordinator.local_address
+    probe_dev = next(
+        (d for d in sorted(coordinator.devices.values(), key=lambda d: d.id) if d.kind == "module"),
+        None,
+    )
+    if host and probe_dev is not None:
+        # how the hub answers status requests on the LAN (to develop local polling)
+        replies = await hass.async_add_executor_job(
+            coordinator.client.probe_local_status, probe_dev.kind, probe_dev.id, host
+        )
+        mac = str(coordinator.client.mac or "")
+        secrets = {v for v in (mac, mac.lower(), ":".join(mac[i : i + 2] for i in range(0, len(mac), 2))) if v}
+        for reply in replies:
+            for key in ("data", "failed"):
+                if isinstance(reply.get(key), str):
+                    for secret in secrets:
+                        reply[key] = reply[key].replace(secret, "**REDACTED**")
+                    if host:
+                        reply[key] = reply[key].replace(host, "**REDACTED**")
+        result["local_status_probe"] = {
+            "device_id": probe_dev.id,
+            "cloud_status": (coordinator.data or {}).get(probe_dev.id),
+            "replies": replies,
+        }
     result["last_update_success"] = coordinator.last_update_success
     statuses = coordinator.data or {}
     devices = []

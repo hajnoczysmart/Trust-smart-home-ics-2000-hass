@@ -68,6 +68,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._statuses: dict[int, list[int]] = {}
         self._reported: dict[int, list[int]] = {}  # last values from the cloud
         self._cancel_refresh: Any = None
+        # Reading statuses from the hub on the LAN (experimental): None = not
+        # tried yet, True = works, False = the hub did not answer -> cloud.
+        self.local_status: bool | None = None
+        # Hub address found on the LAN at start-up when none is configured
+        self.discovered_address: str | None = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
         # the change our own command causes
         self.own_changes: dict[tuple[int, int], tuple[int, float]] = {}
@@ -92,7 +97,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
 
     @property
     def local_address(self) -> str | None:
-        return self.config_entry.data.get(CONF_IP_ADDRESS) or None
+        """Configured hub address, else the one found on the LAN."""
+        return self.config_entry.data.get(CONF_IP_ADDRESS) or self.discovered_address
 
     @property
     def mappings(self) -> dict[str, dict[str, Any]]:
@@ -106,11 +112,29 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     def _poll_ids(self) -> list[int]:
         return [d.id for d in self.devices.values() if d.kind in ("module", "group", "scenario")]
 
+    def _fetch_statuses(self) -> dict[int, list[int]]:
+        """Runs in the executor: LAN first when the hub answers, else the cloud."""
+        ids = self._poll_ids()
+        host = self.local_address
+        if host and self.local_status is not False:
+            entities = [(self.devices[i].kind, i) for i in ids]
+            local = self.client.get_statuses_local(entities, host)
+            if local:
+                if self.local_status is None:
+                    _LOGGER.info("Reading statuses from the hub on the LAN")
+                    self.local_status = True
+                missing = [i for i in ids if i not in local]
+                if missing:
+                    local.update(self.client.get_statuses(missing))
+                return local
+            if self.local_status is None:
+                _LOGGER.debug("The hub does not answer status requests; using the cloud")
+                self.local_status = False
+        return self.client.get_statuses(ids)
+
     async def _async_update_data(self) -> dict[int, list[int]]:
         try:
-            fresh = await self.hass.async_add_executor_job(
-                self.client.get_statuses, self._poll_ids()
-            )
+            fresh = await self.hass.async_add_executor_job(self._fetch_statuses)
         except TrustAuthError as err:
             raise ConfigEntryAuthFailed from err
         except TrustApiError as err:

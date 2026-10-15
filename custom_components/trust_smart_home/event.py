@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .catalog import EventSpec, TrustDevice
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_PRESS
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
 
@@ -57,8 +57,21 @@ class TrustEvent(TrustEntity, EventEntity):
                 if len(self.spec.indexes) > 1:
                     attrs["channel"] = index + 1
                 self._trigger_event(event_type, attrs)
+                self._fire_press(index, new)
                 fired = True
         if fired:
             self.async_write_ha_state()
         else:
             super()._handle_coordinator_update()
+
+    def _fire_press(self, index: int, raw: int) -> None:
+        """Bus event for the device triggers ("Channel 2: ON pressed")."""
+        trigger = self.spec.trigger(index, raw)
+        entry = self.registry_entry
+        if trigger is None or entry is None or entry.device_id is None:
+            return
+        trigger_type, subtype = trigger
+        self.hass.bus.async_fire(
+            EVENT_PRESS,
+            {"device_id": entry.device_id, "type": trigger_type, "subtype": subtype},
+        )
