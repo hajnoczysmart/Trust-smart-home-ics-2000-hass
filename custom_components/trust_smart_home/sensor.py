@@ -1,6 +1,7 @@
 """Sensors: temperature, humidity, battery, P1 energy meter, raw status."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -17,10 +18,17 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfVolume,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
-from .catalog import SensorSpec, TrustDevice, sensor_value
+from .catalog import (
+    SensorSpec,
+    TrustDevice,
+    can_estimate_power,
+    estimated_power,
+    sensor_value,
+)
 from .const import DOMAIN, ROLE_SENSOR
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
@@ -81,6 +89,14 @@ async def async_setup_entry(
         dev = coordinator.devices.get(int(dev_id))
         if dev is not None and mapping.get("role") == ROLE_SENSOR:
             entities.append(TrustMappedSensor(coordinator, dev, int(mapping.get("index", 0))))
+    for dev_id, power in coordinator.power_settings.items():
+        dev = coordinator.devices.get(int(dev_id))
+        if dev is None or not can_estimate_power(dev.description):
+            continue
+        watts, scale = float(power.get("watts", 0)), bool(power.get("scale", True))
+        if watts > 0:
+            entities.append(TrustEstimatedPower(coordinator, dev, watts, scale))
+            entities.append(TrustEstimatedEnergy(coordinator, dev, watts, scale))
     entities += [
         TrustHubSensor(coordinator, "firmware", "device", "SW_revision"),
         TrustHubSensor(coordinator, "zigbee_firmware", "device", "ZigBee_firmware_version"),
@@ -156,6 +172,89 @@ class TrustMappedSensor(TrustEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return self.value(self._index)
+
+
+class TrustEstimatedPower(TrustEntity, SensorEntity):
+    """Power of a light or plug, estimated from its on/off state (and dim level)
+    and the nominal power the user entered. Not a measurement."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_translation_key = "estimated_power"
+
+    def __init__(
+        self,
+        coordinator: TrustCoordinator,
+        device: TrustDevice,
+        watts: float,
+        scale: bool,
+        key: str = "est_power",
+    ) -> None:
+        super().__init__(coordinator, device, key)
+        self._watts = watts
+        self._scale = scale
+
+    def current_watts(self) -> float | None:
+        return estimated_power(self.trust.description, self.status, self._watts, self._scale)
+
+    @property
+    def native_value(self) -> float | None:
+        return self.current_watts()
+
+
+class TrustEstimatedEnergy(TrustEstimatedPower, RestoreEntity):
+    """Energy (kWh) summed from the estimated power, for the Energy dashboard.
+
+    The power is taken as constant between two status updates. A gap longer
+    than MAX_GAP (Home Assistant or the cloud was unavailable) is not counted
+    beyond that many seconds, so a long outage cannot add phantom energy.
+    """
+
+    MAX_GAP = 120.0
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+    _attr_translation_key = "estimated_energy"
+
+    def __init__(
+        self, coordinator: TrustCoordinator, device: TrustDevice, watts: float, scale: bool
+    ) -> None:
+        super().__init__(coordinator, device, watts, scale, "est_energy")
+        self._kwh = 0.0
+        self._last: float | None = None  # monotonic time of the last accumulation
+        self._last_watts = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None:
+            try:
+                self._kwh = max(0.0, float(last.state))
+            except (TypeError, ValueError):
+                pass  # unknown / unavailable
+        self._last = time.monotonic()
+        self._last_watts = self.current_watts() or 0.0
+
+    def _accumulate(self) -> None:
+        now = time.monotonic()
+        if self._last is not None:
+            self._kwh += self._last_watts * min(now - self._last, self.MAX_GAP) / 3_600_000
+        self._last = now
+        watts = self.current_watts()
+        if watts is not None:  # an unknown state keeps the last known power
+            self._last_watts = watts
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._accumulate()
+        super()._handle_coordinator_update()
+
+    @property
+    def native_value(self) -> float:
+        return round(self._kwh, 6)
 
 
 class TrustHubSensor(TrustHubEntity, SensorEntity):

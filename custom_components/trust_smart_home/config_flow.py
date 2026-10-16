@@ -17,16 +17,20 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 
 from .api import TrustApiError, TrustAuthError, TrustClient
+from .catalog import can_estimate_power
 from .const import (
     BINARY_DEVICE_CLASSES,
     CONF_HOME,
     CONF_MAPPINGS,
     CONF_LOCAL_STATUS,
+    CONF_POWER,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_POWER_WATTS,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
     ROLE_BINARY_SENSOR,
@@ -159,7 +163,7 @@ class TrustConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class TrustOptionsFlow(OptionsFlow):
-    """Map a raw status position of any device to an extra sensor."""
+    """Settings, extra sensors for raw status positions, estimated power."""
 
     def __init__(self) -> None:
         self._dev_id: int | None = None
@@ -170,7 +174,9 @@ class TrustOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["settings", "pick_device"])
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "pick_device", "power_pick"]
+        )
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
@@ -257,3 +263,76 @@ class TrustOptionsFlow(OptionsFlow):
                 "status": str(coordinator.status(dev.id)),
             },
         )
+
+    # ---- estimated power -------------------------------------------------
+
+    async def async_step_power_pick(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        coordinator = self._coordinator()
+        if coordinator is None or not coordinator.devices:
+            return self.async_abort(reason="not_loaded")
+        if user_input is not None:
+            self._dev_id = int(user_input["device"])
+            return await self.async_step_power_device()
+        configured = coordinator.power_settings
+        choices = {}
+        for dev in sorted(coordinator.devices.values(), key=lambda d: d.name.lower()):
+            if dev.kind not in ("module", "group") or not can_estimate_power(dev.description):
+                continue
+            label = f"{dev.name} [{dev.type_name}]"
+            power = configured.get(str(dev.id))
+            if power:
+                label += f" – {power.get('watts'):g} W"
+            choices[str(dev.id)] = label
+        if not choices:
+            return self.async_abort(reason="no_power_devices")
+        return self.async_show_form(
+            step_id="power_pick",
+            data_schema=vol.Schema({vol.Required("device"): vol.In(choices)}),
+        )
+
+    async def async_step_power_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        coordinator = self._coordinator()
+        dev = coordinator.devices.get(self._dev_id) if coordinator else None
+        if dev is None or not can_estimate_power(dev.description):
+            return self.async_abort(reason="not_loaded")
+        dimmable = dev.description.light is not None and dev.description.light.dim_index is not None
+        if user_input is not None:
+            power = dict(self.config_entry.options.get(CONF_POWER, {}))
+            watts = float(user_input["watts"])
+            if watts <= 0:
+                power.pop(str(dev.id), None)
+                self._remove_entities(coordinator, dev.id)
+            else:
+                power[str(dev.id)] = {
+                    "watts": watts,
+                    "scale": bool(user_input.get("scale", True)) and dimmable,
+                }
+            return self.async_create_entry(
+                title="", data={**self.config_entry.options, CONF_POWER: power}
+            )
+        current = coordinator.power_settings.get(str(dev.id), {})
+        fields: dict[Any, Any] = {
+            vol.Required("watts", default=current.get("watts", 0)): vol.All(
+                vol.Coerce(float), vol.Range(min=0, max=MAX_POWER_WATTS)
+            )
+        }
+        if dimmable:
+            fields[vol.Required("scale", default=current.get("scale", True))] = bool
+        return self.async_show_form(
+            step_id="power_device",
+            data_schema=vol.Schema(fields),
+            description_placeholders={"name": dev.name},
+        )
+
+    def _remove_entities(self, coordinator, dev_id: int) -> None:
+        """Drop the estimated sensors of a device whose power was cleared."""
+        registry = er.async_get(self.hass)
+        for key in ("est_power", "est_energy"):
+            unique_id = f"{coordinator.home_id}_{dev_id}_{key}"
+            entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+            if entity_id:
+                registry.async_remove(entity_id)

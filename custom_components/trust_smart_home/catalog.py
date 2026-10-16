@@ -694,6 +694,40 @@ def level_to_brightness(level: int, spec: LightSpec) -> int:
     return max(0, min(255, round(level / spec.dim_max * 255)))
 
 
+def can_estimate_power(desc: Description) -> bool:
+    """True for lights and plugs/switches (anything with an on/off state)."""
+    return desc.light is not None or desc.switch is not None
+
+
+def estimated_power(
+    desc: Description, status: list[int] | None, watts: float, scale: bool
+) -> float | None:
+    """Watts a light or plug draws, estimated from its state and a nominal power.
+
+    Off -> 0. On -> the nominal power; with ``scale`` a dimmable light draws
+    in proportion to its dim level. None while the state is unknown.
+    """
+    if desc.light is not None:
+        spec = desc.light
+        on = status_value(status, spec.on_index)
+        if on is None:
+            return None
+        if on != 1:
+            return 0.0
+        if scale and spec.dim_index is not None:
+            level = status_value(status, spec.dim_index)
+            if level is not None:
+                level = max(spec.dim_min, min(spec.dim_max, level))
+                return round(float(watts) * level / spec.dim_max, 2)
+        return float(watts)
+    if desc.switch is not None:
+        on = status_value(status, desc.switch.index)
+        if on is None:
+            return None
+        return float(watts) if on == 1 else 0.0
+    return None
+
+
 def kelvin_to_mired(kelvin: int) -> int:
     return max(0, min(600, round(1_000_000 / max(1, kelvin))))
 

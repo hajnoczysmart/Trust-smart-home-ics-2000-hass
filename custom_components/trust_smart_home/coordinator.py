@@ -26,6 +26,7 @@ from .catalog import TrustDevice, derive_group_status, group_state_indexes, stat
 from .const import (
     CONF_LOCAL_STATUS,
     CONF_MAPPINGS,
+    CONF_POWER,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -126,6 +127,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     @property
     def mappings(self) -> dict[str, dict[str, Any]]:
         return dict(self.config_entry.options.get(CONF_MAPPINGS, {}))
+
+    @property
+    def power_settings(self) -> dict[str, dict[str, Any]]:
+        """{device id: {watts, scale}} of devices with an estimated power."""
+        return dict(self.config_entry.options.get(CONF_POWER, {}))
 
     # ---- status ----------------------------------------------------------
 

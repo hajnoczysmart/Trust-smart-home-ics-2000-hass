@@ -59,7 +59,8 @@
         "title": "Trust Smart Home",
         "menu_options": {
           "settings": "Settings",
-          "pick_device": "Extra sensor for a device"
+          "pick_device": "Extra sensor for a device",
+          "power_pick": "Estimated power of lights and plugs"
         }
       },
       "settings": {
@@ -69,10 +70,26 @@
           "scan_interval": "Status polling interval (seconds)",
           "local_status": "Read states from the hub on the LAN (experimental)"
         }
+      },
+      "power_pick": {
+        "title": "Estimated power",
+        "description": "Enter the power of a light or plug, and Home Assistant estimates its consumption from its on/off state. Devices that already have a value show it.",
+        "data": {
+          "device": "Device"
+        }
+      },
+      "power_device": {
+        "title": "Estimated power of {name}",
+        "description": "Power in watts when the device is on (for a light: at full brightness). Enter 0 to remove the estimate. This is an estimate, not a measurement.",
+        "data": {
+          "watts": "Power (W)",
+          "scale": "Scale with brightness (dimmable lights)"
+        }
       }
     },
     "abort": {
-      "not_loaded": "The integration is not loaded yet, try again in a moment"
+      "not_loaded": "The integration is not loaded yet, try again in a moment",
+      "no_power_devices": "There is no light or plug to set a power for"
     }
   },
   "entity": {
@@ -165,6 +182,12 @@
       },
       "hub_zigbee_channel": {
         "name": "Zigbee channel"
+      },
+      "estimated_power": {
+        "name": "Estimated power"
+      },
+      "estimated_energy": {
+        "name": "Estimated energy"
       }
     },
     "event": {

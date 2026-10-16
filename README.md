@@ -135,6 +135,26 @@ no fade of their own, so the integration steps the brightness (at most two steps
 the LAN, one every 3 seconds through the cloud). After a fade-out, the next plain *turn on*
 returns to the brightness from before the fade. Any other command stops a running fade.
 
+## Estimated power and energy
+
+The hub does not measure consumption, but you can enter how much a light or plug draws and
+let Home Assistant estimate it: Configure → *Estimated power of lights and plugs* → pick the
+device → enter its power in watts (for a light: at full brightness; for a plug: the device
+plugged into it). Enter 0 to remove it again.
+
+Each such device gets two sensors:
+
+- **Estimated power** (W): the entered power while the device is on, 0 while it is off.
+  For dimmable lights it follows the brightness when *Scale with brightness* is on (the
+  default), e.g. a 9 W bulb at 50 % shows 4.5 W.
+- **Estimated energy** (kWh): the power summed over time. It can be added to the Energy
+  dashboard (*Individual devices*), and it continues after a restart.
+
+These are estimates based on the on/off state and the value you entered, not measurements.
+LED bulbs do not use power exactly in proportion to their brightness, and a plug's
+consumption depends on what is plugged in. If Home Assistant or the cloud is unavailable
+for a while, at most 2 minutes of that gap is counted.
+
 ## Statuses from the hub (experimental)
 
 Configure → *Settings* → *Read states from the hub on the LAN* (off by default): device

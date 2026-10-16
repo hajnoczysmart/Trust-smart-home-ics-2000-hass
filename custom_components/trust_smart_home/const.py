@@ -12,6 +12,10 @@ ROLE_NONE = "none"
 ROLE_BINARY_SENSOR = "binary_sensor"
 ROLE_SENSOR = "sensor"
 
+# Options: nominal power of lights and plugs, for estimated power/energy sensors
+CONF_POWER = "power"  # {device_id: {watts, scale}}
+MAX_POWER_WATTS = 3680  # a 16 A socket
+
 CONF_SCAN_INTERVAL = "scan_interval"  # seconds between status polls
 CONF_LOCAL_STATUS = "local_status"  # read statuses from the hub on the LAN (experimental, off)
 DEFAULT_SCAN_INTERVAL = 3
