@@ -309,9 +309,16 @@ class TrustClient:
 
     def sync(self) -> list[dict[str, Any]]:
         """All entities of the home with their decrypted 'data' object."""
-        raw = self._post("gateway.php", {"action": "sync", **self._auth()})
+        # The cloud needs the selected home here: with an empty home_id it now
+        # answers with an empty device list for some accounts (issue #1).
+        raw = self._post(
+            "gateway.php",
+            {"action": "sync", **self._auth(), "home_id": self.home_id or ""},
+        )
         if not isinstance(raw, list):
             raise TrustApiError("Unexpected sync response")
+        if not raw:
+            _LOGGER.warning("The Trust cloud returned no devices for this home")
         out: list[dict[str, Any]] = []
         for item in raw:
             try:
