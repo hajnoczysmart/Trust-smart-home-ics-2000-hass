@@ -427,15 +427,19 @@ class TrustClient:
         """Send a message on the LAN the way the app does and return the reply.
 
         - "busy" (NAK 17-20): wait 40-60 ms and send again, up to 20 times;
-        - a request is first acknowledged, then answered in a second packet.
+        - a request is first acknowledged, then answered in a second packet;
+        - every answer is acknowledged, as the app does: without that the hub
+          waits about a second for the acknowledgement before it handles the
+          next message (measured on a real hub, issue #2).
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(2)
         try:
             reply = b""
+            addr: Any = None
             for _attempt in range(BUSY_RETRIES + 1):
                 sock.sendto(frame, (host, LOCAL_PORT))
-                reply, _addr = sock.recvfrom(8192)
+                reply, addr = sock.recvfrom(8192)
                 if len(reply) > 43 and reply[2] == MSG_NOT_ACKNOWLEDGE and reply[43] in BUSY_ERRORS:
                     _LOGGER.debug("Hub busy (error %s), retrying", reply[43])
                     time.sleep(random.uniform(0.04, 0.06))
@@ -443,9 +447,14 @@ class TrustClient:
                 break
             if expect_data and len(reply) >= 3 and reply[2] == MSG_ACKNOWLEDGE:
                 try:
-                    reply, _addr = sock.recvfrom(8192)  # the actual answer
+                    reply, addr = sock.recvfrom(8192)  # the actual answer
                 except socket.timeout:
                     pass  # only an acknowledgement came
+            if len(reply) >= 43 and reply[2] not in (MSG_ACKNOWLEDGE, MSG_NOT_ACKNOWLEDGE):
+                try:
+                    sock.sendto(ack_frame(reply), addr)
+                except OSError as err:
+                    _LOGGER.debug("Acknowledging the hub's answer failed: %s", err)
             return reply
         finally:
             sock.close()
@@ -535,8 +544,8 @@ class TrustClient:
 
         Each request is timed packet by packet, to find out where the time of
         a status request goes. "resend" answers "busy" by sending again, like
-        normal commands; "wait" sends once and only listens, to see whether
-        the resending itself keeps the hub busy.
+        normal commands; "wait" sends once and only listens. Answers are
+        acknowledged, as in normal operation.
         """
         variants = [
             ("kind_id", "resend", {kind: {"id": entity_id}}),
@@ -551,7 +560,9 @@ class TrustClient:
                 MSG_GET_ENTITY_STATUS,
             )
             try:
-                raw, timing = self._exchange_traced(frame, local_address, mode == "resend")
+                raw, timing = self._exchange_traced(
+                    frame, local_address, mode == "resend", ack_answer=True
+                )
             except OSError as err:
                 results.append({"request": name, "mode": mode, "failed": f"{type(err).__name__}: {err}"})
                 continue
@@ -588,11 +599,10 @@ class TrustClient:
         """
         runs: list[dict] = []
         payload = encrypt(json.dumps({"id": entity_id}), self.aes_key or "")
-        for n, (ack, new_magic) in enumerate(
-            [(False, False), (True, False), (False, True), (True, True)]
-        ):
-            if n:
-                time.sleep(PROBE_SETTLE)  # let the hub finish waiting
+        for ack, new_magic in [(False, False), (True, False), (False, True), (True, True)]:
+            # let the hub finish what came before (also before the first run:
+            # right after a refused request it answers "busy" for a moment)
+            time.sleep(PROBE_SETTLE)
             run: dict[str, Any] = {"ack": ack, "new_magic": new_magic, "requests": []}
             for _ in range(2):
                 frame = bytearray(
@@ -602,7 +612,7 @@ class TrustClient:
                     frame[9:13] = random.getrandbits(32).to_bytes(4, "little")
                 try:
                     raw, timing = self._exchange_traced(
-                        bytes(frame), local_address, False, ack_answer=ack
+                        bytes(frame), local_address, True, ack_answer=ack
                     )
                 except OSError as err:
                     run["requests"].append({"failed": f"{type(err).__name__}: {err}"})
