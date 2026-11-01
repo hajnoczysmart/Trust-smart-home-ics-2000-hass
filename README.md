@@ -162,7 +162,9 @@ states are then read directly from the hub instead of the Trust cloud. The app i
 does this, so the request format is an educated guess; if the hub does not answer, the
 integration keeps using the cloud. Turn it off again if devices stop responding or show
 wrong states. The diagnostics file shows whether it is used (`local_status`) and the hub's
-raw answers (`local_status_probe`), also when the option is off.
+raw answers (`local_status_probe`), also when the option is off. The probe also times each
+request packet by packet (when the acknowledgement, any "busy" replies and the answer
+arrived), both when "busy" is answered by sending again and when it only waits.
 
 ## Light effects
 

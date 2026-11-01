@@ -41,6 +41,7 @@ MSG_NOT_ACKNOWLEDGE = 253
 BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
 BUSY_RETRIES = 20  # as the app's local transport
 LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
+PROBE_WAIT = 3.0  # seconds the diagnostics probe waits for one answer
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
 LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
 # Hub settings (Settings / pj4 JSON names)
@@ -518,33 +519,104 @@ class TrustClient:
         return out
 
     def probe_local_status(self, kind: str, entity_id: int, local_address: str) -> list[dict]:
-        """Raw replies to a few status-request layouts, for the diagnostics file."""
+        """Raw replies to a few status-request layouts, for the diagnostics file.
+
+        Each request is timed packet by packet, to find out where the time of
+        a status request goes. "resend" answers "busy" by sending again, like
+        normal commands; "wait" sends once and only listens, to see whether
+        the resending itself keeps the hub busy.
+        """
         variants = [
-            ("kind_id", {kind: {"id": entity_id}}),
-            ("id", {"id": entity_id}),
-            ("empty", {}),
+            ("kind_id", "resend", {kind: {"id": entity_id}}),
+            ("id", "resend", {"id": entity_id}),
+            ("id", "wait", {"id": entity_id}),
+            ("empty", "resend", {}),
         ]
         results: list[dict] = []
-        for name, data in variants:
+        for name, mode, data in variants:
             frame = build_frame(
                 self.mac or "", entity_id, encrypt(json.dumps(data), self.aes_key or ""),
                 MSG_GET_ENTITY_STATUS,
             )
             try:
-                raw = self._exchange(frame, local_address, expect_data=True)
-                msg_type, _v, text, code = parse_reply(raw, self.aes_key or "")
-                results.append(
-                    {
-                        "request": name,
-                        "reply_type": msg_type,
-                        "error": code,
-                        "segment": raw[1] if len(raw) > 1 else None,
-                        "data": (text or "")[:1500],
-                    }
-                )
-            except (OSError, ValueError) as err:
-                results.append({"request": name, "failed": f"{type(err).__name__}: {err}"})
+                raw, timing = self._exchange_traced(frame, local_address, mode == "resend")
+            except OSError as err:
+                results.append({"request": name, "mode": mode, "failed": f"{type(err).__name__}: {err}"})
+                continue
+            result: dict[str, Any] = {"request": name, "mode": mode, "timing": timing}
+            if raw is None:
+                result["reply_type"] = None  # no answer within PROBE_WAIT
+            else:
+                try:
+                    msg_type, _v, text, code = parse_reply(raw, self.aes_key or "")
+                except ValueError as err:
+                    result["failed"] = f"ValueError: {err}"
+                else:
+                    result.update(
+                        {
+                            "reply_type": msg_type,
+                            "error": code,
+                            "segment": raw[1] if len(raw) > 1 else None,
+                            "data": (text or "")[:1500],
+                        }
+                    )
+            results.append(result)
         return results
+
+    def _exchange_traced(
+        self, frame: bytes, host: str, resend_on_busy: bool
+    ) -> tuple[bytes | None, dict[str, Any]]:
+        """Like _exchange, but records when each packet was sent and received.
+
+        Returns the answer (None if none came within PROBE_WAIT) and the
+        timing: total time, number of sends, number of "busy" replies, and the
+        packets in order (milliseconds from the first send).
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.25)
+        start = time.monotonic()
+        events: list[dict[str, Any]] = []
+        answer: bytes | None = None
+        sends = busy = 0
+
+        def now_ms() -> int:
+            return round((time.monotonic() - start) * 1000)
+
+        try:
+            sock.sendto(frame, (host, LOCAL_PORT))
+            sends = 1
+            events.append({"t_ms": 0, "event": "send"})
+            while time.monotonic() - start < PROBE_WAIT:
+                try:
+                    reply, _addr = sock.recvfrom(8192)
+                except socket.timeout:
+                    continue
+                msg_type = reply[2] if len(reply) > 2 else None
+                event: dict[str, Any] = {"t_ms": now_ms(), "event": "reply", "type": msg_type}
+                is_nak = msg_type == MSG_NOT_ACKNOWLEDGE and len(reply) > 43
+                if is_nak:
+                    event["error"] = reply[43]
+                events.append(event)
+                if msg_type == MSG_ACKNOWLEDGE:
+                    continue  # the answer follows in another packet
+                if is_nak and reply[43] in BUSY_ERRORS:
+                    busy += 1
+                    if resend_on_busy and sends <= BUSY_RETRIES:
+                        time.sleep(random.uniform(0.04, 0.06))
+                        sock.sendto(frame, (host, LOCAL_PORT))
+                        sends += 1
+                        events.append({"t_ms": now_ms(), "event": "send"})
+                    continue
+                answer = reply
+                break
+        finally:
+            sock.close()
+        return answer, {
+            "total_ms": now_ms(),
+            "sends": sends,
+            "busy_replies": busy,
+            "events": events[:80],
+        }
 
     # ---- hub settings, information and restart --------------------------------
 
