@@ -165,6 +165,9 @@ wrong states. The diagnostics file shows whether it is used (`local_status`) and
 raw answers (`local_status_probe`), also when the option is off. The probe also times each
 request packet by packet (when the acknowledgement, any "busy" replies and the answer
 arrived), both when "busy" is answered by sending again and when it only waits.
+`local_status_ack_test` checks whether the hub answers a second request at once when its
+answers are acknowledged like the app does (with and without a fresh header per request);
+it runs on a light or switch and takes a few seconds.
 
 ## Light effects
 

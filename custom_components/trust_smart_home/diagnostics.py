@@ -60,6 +60,24 @@ async def async_get_config_entry_diagnostics(
             "cloud_status": (coordinator.data or {}).get(probe_dev.id),
             "replies": replies,
         }
+        # does acknowledging an answer remove the hub's ~1 s pause? (issue #2)
+        ack_dev = next(
+            (
+                d
+                for d in sorted(coordinator.devices.values(), key=lambda d: d.id)
+                if d.kind == "module"
+                and (d.description.light is not None or d.description.switch is not None)
+            ),
+            probe_dev,
+        )
+        runs = await hass.async_add_executor_job(
+            coordinator.client.probe_acknowledgement, ack_dev.id, host
+        )
+        result["local_status_ack_test"] = {
+            "device_id": ack_dev.id,
+            "device_type": ack_dev.type_name,
+            "runs": runs,
+        }
     result["last_update_success"] = coordinator.last_update_success
     statuses = coordinator.data or {}
     devices = []

@@ -42,6 +42,7 @@ BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING,
 BUSY_RETRIES = 20  # as the app's local transport
 LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
 PROBE_WAIT = 3.0  # seconds the diagnostics probe waits for one answer
+PROBE_SETTLE = 1.5  # pause between the probe's acknowledgement test runs
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
 LED_STATES = ("on", "off", "disco")  # Settings "led" (LedsState)
 # Hub settings (Settings / pj4 JSON names)
@@ -152,6 +153,17 @@ def build_frame(
     header[29:33] = int(entity_id).to_bytes(4, "little")
     header[41:43] = len(encrypted).to_bytes(2, "little")
     return bytes(header) + encrypted
+
+
+def ack_frame(received: bytes) -> bytes:
+    """Acknowledgement of a message from the hub, as the app builds it: next
+    frame number, the hub's MAC, a random magic number, no data."""
+    header = bytearray(43)
+    header[0] = (received[0] + 1) % 255
+    header[2] = MSG_ACKNOWLEDGE
+    header[3:9] = received[3:9]
+    header[9:13] = random.getrandbits(32).to_bytes(4, "little")
+    return bytes(header)
 
 
 def build_command(
@@ -563,14 +575,62 @@ class TrustClient:
             results.append(result)
         return results
 
+    def probe_acknowledgement(self, entity_id: int, local_address: str) -> list[dict]:
+        """Does acknowledging an answer let the hub answer the next request at once?
+
+        After answering a status request the hub stays silent for about a
+        second (issue #2). The app acknowledges every message it receives from
+        the hub; this integration does not. Each run sends the same status
+        request twice in a row and times the second one: without and with an
+        acknowledgement of the answers, and with the integration's fixed frame
+        header or a fresh random magic number per request (as the app does),
+        in case the hub takes an identical second request for a duplicate.
+        """
+        runs: list[dict] = []
+        payload = encrypt(json.dumps({"id": entity_id}), self.aes_key or "")
+        for n, (ack, new_magic) in enumerate(
+            [(False, False), (True, False), (False, True), (True, True)]
+        ):
+            if n:
+                time.sleep(PROBE_SETTLE)  # let the hub finish waiting
+            run: dict[str, Any] = {"ack": ack, "new_magic": new_magic, "requests": []}
+            for _ in range(2):
+                frame = bytearray(
+                    build_frame(self.mac or "", entity_id, payload, MSG_GET_ENTITY_STATUS)
+                )
+                if new_magic:
+                    frame[9:13] = random.getrandbits(32).to_bytes(4, "little")
+                try:
+                    raw, timing = self._exchange_traced(
+                        bytes(frame), local_address, False, ack_answer=ack
+                    )
+                except OSError as err:
+                    run["requests"].append({"failed": f"{type(err).__name__}: {err}"})
+                    break
+                msg_type = raw[2] if raw is not None and len(raw) > 2 else None
+                error = raw[43] if msg_type == MSG_NOT_ACKNOWLEDGE and len(raw) > 43 else None
+                run["requests"].append({"reply_type": msg_type, "error": error, **timing})
+                if raw is None:
+                    break  # no answer: do not wait for a second one
+            requests = run["requests"]
+            run["second_request_ms"] = (
+                requests[1].get("total_ms") if len(requests) > 1 else None
+            )
+            runs.append(run)
+            if not requests or requests[0].get("reply_type") is None:
+                break  # the hub does not answer at all; stop here
+        return runs
+
     def _exchange_traced(
-        self, frame: bytes, host: str, resend_on_busy: bool
+        self, frame: bytes, host: str, resend_on_busy: bool, ack_answer: bool = False
     ) -> tuple[bytes | None, dict[str, Any]]:
         """Like _exchange, but records when each packet was sent and received.
 
         Returns the answer (None if none came within PROBE_WAIT) and the
         timing: total time, number of sends, number of "busy" replies, and the
-        packets in order (milliseconds from the first send).
+        packets in order (milliseconds from the first send). With
+        ``ack_answer`` the answer is acknowledged the way the app acknowledges
+        every message it receives from the hub.
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(0.25)
@@ -608,6 +668,9 @@ class TrustClient:
                         events.append({"t_ms": now_ms(), "event": "send"})
                     continue
                 answer = reply
+                if ack_answer and msg_type != MSG_NOT_ACKNOWLEDGE and len(reply) >= 43:
+                    sock.sendto(ack_frame(reply), _addr)
+                    events.append({"t_ms": now_ms(), "event": "ack"})
                 break
         finally:
             sock.close()
