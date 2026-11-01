@@ -36,6 +36,11 @@ async def async_get_config_entry_diagnostics(
     result["local_control"] = coordinator.local_address is not None
     result["hub_address_found_automatically"] = coordinator.discovered_address is not None
     result["local_status"] = coordinator.local_status
+    result["local_status_devices"] = {
+        "read_on_lan": sorted(coordinator.local_ok),
+        "kept_on_cloud": sorted(coordinator.local_excluded),
+        "unavailable_cloud_down": sorted(coordinator.stale_ids),
+    }
     host = coordinator.local_address
     probe_dev = next(
         (d for d in sorted(coordinator.devices.values(), key=lambda d: d.id) if d.kind == "module"),

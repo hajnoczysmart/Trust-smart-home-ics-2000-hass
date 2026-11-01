@@ -53,6 +53,8 @@ class TrustEntity(CoordinatorEntity[TrustCoordinator]):
     def available(self) -> bool:
         if not super().available:
             return False
+        if self.trust.id in self.coordinator.stale_ids:
+            return False  # the cloud is down and this device is not read on the LAN
         online = self.trust.description.online_index
         if online is not None and self.value(online) == 0:
             return False  # Zigbee device reports itself offline

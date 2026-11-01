@@ -157,17 +157,35 @@ for a while, at most 2 minutes of that gap is counted.
 
 ## Statuses from the hub (experimental)
 
-Configure → *Settings* → *Read states from the hub on the LAN* (off by default): device
-states are then read directly from the hub instead of the Trust cloud. The app itself never
-does this, so the request format is an educated guess; if the hub does not answer, the
-integration keeps using the cloud. Turn it off again if devices stop responding or show
-wrong states. The diagnostics file shows whether it is used (`local_status`) and the hub's
-raw answers (`local_status_probe`), also when the option is off. The probe also times each
-request packet by packet (when the acknowledgement, any "busy" replies and the answer
-arrived), both when "busy" is answered by sending again and when it only waits.
-`local_status_ack_test` checks whether the hub answers a second request at once when its
-answers are acknowledged like the app does (with and without a fresh header per request);
-it runs on a light or switch and takes a few seconds.
+> **Experimental, and not tested with every device type.** It has been measured on one hub
+> with 433 MHz switches, a Zigbee dimmer, Zigbee lights and Zigbee smoke/CO sensors. Other
+> device types may behave differently. Turn it off if devices show wrong states or stop
+> responding, and please report what you see.
+
+Configure → *Settings* → *Read states from the hub on the LAN* (off by default). The app
+itself always reads states from the Trust cloud; with this option the integration asks the
+hub directly for part of the devices:
+
+- **Read from the hub:** lights, switches/plugs and Zigbee sensors. Their states are fresher
+  (the cloud often reports an old value for a while after a command), and they keep working
+  when the Trust cloud is unavailable.
+- **Always from the cloud:** covers (Somfy and other motors), the P1 energy module, the alarm,
+  rules and groups. The hub does not keep their states (it answers with zeros, or not at all).
+- **Checked first:** a device is only read from the hub after its first answer matches the
+  cloud's (for example not all zeros where the cloud has a value). Devices that fail the check,
+  or stop answering, stay on the cloud.
+- **When the cloud is down:** devices read from the hub stay up to date; the others are shown
+  as unavailable rather than with an old state.
+
+Each device takes about 0.1 s (the hub answers one request at a time; the integration
+acknowledges each answer like the app, otherwise the hub would pause for a second). Up to
+2 seconds per poll are used, which covers about 20 devices; with more, they take turns. The
+cloud is asked at the same time, so a poll does not take longer. Commands always have
+priority: a command waits at most for the one request in progress.
+
+The diagnostics file shows which devices are read from the hub (`local_status_devices`),
+the hub's raw answers and their timing (`local_status_probe`), and an acknowledgement test
+(`local_status_ack_test`, a few seconds). These are included also when the option is off.
 
 ## Light effects
 

@@ -65,10 +65,10 @@
       },
       "settings": {
         "title": "Settings",
-        "description": "How often device states are read (default: 3 seconds). Reading states directly from the hub is experimental: turn it off if devices stop responding.",
+        "description": "How often device states are read (default: 3 seconds).\n\nReading states from the hub on the LAN is experimental and has not been tested with every device type. When it is on, lights, switches and Zigbee sensors are read from the hub, everything else still from the cloud, and each device's first answer is checked against the cloud. Turn it off if devices show wrong states or stop responding.",
         "data": {
           "scan_interval": "Status polling interval (seconds)",
-          "local_status": "Read states from the hub on the LAN (experimental)"
+          "local_status": "Read states from the hub on the LAN (experimental, not tested with every device)"
         }
       },
       "power_pick": {

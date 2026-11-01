@@ -1,6 +1,7 @@
 """Data coordinator for Trust Smart Home (ICS-2000)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -22,7 +23,14 @@ from .api import (
     TrustAuthError,
     TrustClient,
 )
-from .catalog import TrustDevice, derive_group_status, group_state_indexes, status_value
+from .catalog import (
+    TrustDevice,
+    derive_group_status,
+    group_state_indexes,
+    plausible_local_status,
+    reads_locally,
+    status_value,
+)
 from .const import (
     CONF_LOCAL_STATUS,
     CONF_MAPPINGS,
@@ -39,6 +47,10 @@ from .const import (
 # older commands is treated as a late echo. Later, every change is taken over
 # (so changes made in the app or on the device are never hidden for long).
 ECHO_WINDOW = 60.0
+
+# Reading statuses from the hub on the LAN (experimental option):
+LOCAL_MISSES = 3  # unanswered requests in a row before a device goes back to the cloud
+LOCAL_RETRY = 60.0  # seconds before trying the hub again after a round without answers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,8 +96,16 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._reported: dict[int, list[int]] = {}  # last values from the cloud
         self._cancel_refresh: Any = None
         # Reading statuses from the hub on the LAN (experimental): None = not
-        # tried yet, True = works, False = the hub did not answer -> cloud.
+        # tried yet, True = works, False = the hub did not answer (tried again later).
         self.local_status: bool | None = None
+        self.local_ok: set[int] = set()  # read from the hub (first answer checked)
+        self.local_excluded: set[int] = set()  # their answers did not fit: cloud
+        self._local_misses: dict[int, int] = {}
+        self._local_next = 0  # where the next round starts (round robin)
+        self._local_retry_at = 0.0
+        # devices whose state could not be refreshed because the cloud failed
+        # while the hub answered on the LAN: shown as unavailable
+        self.stale_ids: set[int] = set()
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
@@ -141,36 +161,156 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     def _poll_ids(self) -> list[int]:
         return [d.id for d in self.devices.values() if d.kind in ("module", "group", "scenario")]
 
-    def _fetch_statuses(self) -> dict[int, list[int]]:
-        """Runs in the executor: LAN first when the hub answers, else the cloud."""
-        ids = self._poll_ids()
-        host = self.local_address
-        enabled = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
-        if host and enabled and self.local_status is not False:
-            entities = [(self.devices[i].kind, i) for i in ids]
-            local = self.client.get_statuses_local(entities, host)
-            if local:
-                if self.local_status is None:
-                    _LOGGER.info("Reading statuses from the hub on the LAN")
-                    self.local_status = True
-                missing = [i for i in ids if i not in local]
-                if missing:
-                    local.update(self.client.get_statuses(missing))
-                return local
-            if self.local_status is None:
-                _LOGGER.debug("The hub does not answer status requests; using the cloud")
-                self.local_status = False
-        return self.client.get_statuses(ids)
+    def _local_candidates(self) -> list[int]:
+        """Devices to read from the hub this round, in round-robin order."""
+        if not self.local_address or not self.config_entry.options.get(CONF_LOCAL_STATUS, False):
+            return []
+        if time.monotonic() < self._local_retry_at:
+            return []
+        ids = [
+            d.id
+            for d in sorted(self.devices.values(), key=lambda d: d.id)
+            if d.id not in self.local_excluded and reads_locally(d)
+        ]
+        if not ids:
+            return []
+        start = self._local_next % len(ids)
+        return ids[start:] + ids[:start]
 
     async def _async_update_data(self) -> dict[int, list[int]]:
-        try:
-            fresh = await self.hass.async_add_executor_job(self._fetch_statuses)
-        except TrustAuthError as err:
-            raise ConfigEntryAuthFailed from err
-        except TrustApiError as err:
-            raise UpdateFailed(str(err)) from err
+        """Statuses from the cloud, and (when the experimental option is on)
+        from the hub on the LAN for the devices that answer correctly there.
+        Both run at the same time, so a poll does not take longer."""
+        ids = self._poll_ids()
+        order = self._local_candidates()
+        in_order = set(order)
+        cloud_ids = [i for i in ids if i not in self.local_ok or i not in in_order]
+        local_job = (
+            self.hass.async_add_executor_job(
+                self.client.get_statuses_local, order, self.local_address
+            )
+            if order
+            else None
+        )
+        cloud_job = (
+            self.hass.async_add_executor_job(self.client.get_statuses, cloud_ids)
+            if cloud_ids
+            else None
+        )
+        jobs = [j for j in (local_job, cloud_job) if j is not None]
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+        local_res = results[0] if local_job is not None else None
+        cloud_res = results[-1] if cloud_job is not None else {}
+
+        cloud: dict[int, list[int]] = {}
+        cloud_error: TrustApiError | None = None
+        if isinstance(cloud_res, TrustAuthError):
+            raise ConfigEntryAuthFailed from cloud_res
+        if isinstance(cloud_res, TrustApiError):
+            cloud_error = cloud_res
+        elif isinstance(cloud_res, BaseException):
+            raise cloud_res
+        else:
+            cloud = dict(cloud_res)
+
+        fresh = dict(cloud)
+        if order:
+            if isinstance(local_res, BaseException):
+                _LOGGER.debug("Reading statuses on the LAN failed: %s", local_res)
+                got, asked = {}, len(order)
+            else:
+                got, asked = local_res
+            fresh.update(self._use_local(order, got, asked, cloud))
+            if not got and cloud_error is None:
+                # the hub did not answer this round: these come from the cloud now
+                missing = [i for i in order if i in self.local_ok]
+                if missing:
+                    try:
+                        fresh.update(
+                            await self.hass.async_add_executor_job(
+                                self.client.get_statuses, missing
+                            )
+                        )
+                    except TrustAuthError as err:
+                        raise ConfigEntryAuthFailed from err
+                    except TrustApiError as err:
+                        cloud_error = err
+
+        if cloud_error is not None:
+            local_now = [i for i in fresh if i in self.local_ok]
+            if not local_now:
+                raise UpdateFailed(str(cloud_error)) from cloud_error
+            self.stale_ids = {
+                i for i in ids if i not in self.local_ok and not self._follows_local(i)
+            }
+            _LOGGER.debug(
+                "Cloud unavailable (%s); %d devices read on the LAN", cloud_error, len(local_now)
+            )
+        else:
+            self.stale_ids = set()
         self._merge(fresh)
         return {k: list(v) for k, v in self._statuses.items()}
+
+    def _follows_local(self, entity_id: int) -> bool:
+        """A group whose members are all read on the LAN stays up to date."""
+        dev = self.devices.get(entity_id)
+        return bool(dev and dev.kind == "group" and dev.members) and all(
+            m in self.local_ok for m in dev.members
+        )
+
+    def _use_local(
+        self,
+        order: list[int],
+        got: dict[int, list[int]],
+        asked: int,
+        cloud: dict[int, list[int]],
+    ) -> dict[int, list[int]]:
+        """The hub's answers that may be used, and which devices are read on
+        the LAN. A device's first answer is checked against the cloud's."""
+        use: dict[int, list[int]] = {}
+        if not got:
+            if self.local_status is None:
+                _LOGGER.info("The hub does not answer status requests on the LAN; using the cloud")
+                self.local_status = False
+            else:
+                _LOGGER.debug("No status answers from the hub; trying again in %d s", LOCAL_RETRY)
+            self._local_retry_at = time.monotonic() + LOCAL_RETRY
+            return use
+        if self.local_status is not True:
+            _LOGGER.info(
+                "Reading device states from the hub on the LAN (experimental, "
+                "not tested with every device type)"
+            )
+        self.local_status = True
+        self._local_next = (self._local_next + asked) % max(1, len(order))
+        for entity_id in order[:asked]:
+            status = got.get(entity_id)
+            if status is None:
+                misses = self._local_misses.get(entity_id, 0) + 1
+                self._local_misses[entity_id] = misses
+                if misses >= LOCAL_MISSES:
+                    self._local_misses.pop(entity_id, None)
+                    if entity_id in self.local_ok:
+                        self.local_ok.discard(entity_id)  # checked again later
+                    else:
+                        self.local_excluded.add(entity_id)
+                        _LOGGER.debug(
+                            "Device %s does not answer on the LAN; using the cloud", entity_id
+                        )
+                continue
+            self._local_misses.pop(entity_id, None)
+            if entity_id in self.local_ok:
+                use[entity_id] = status
+            elif entity_id in cloud:
+                if plausible_local_status(status, cloud[entity_id]):
+                    self.local_ok.add(entity_id)  # from the next round on
+                else:
+                    self.local_excluded.add(entity_id)
+                    _LOGGER.debug(
+                        "Device %s: the hub's answer does not fit the cloud's; using the cloud",
+                        entity_id,
+                    )
+        return use
 
     def _merge(self, fresh: dict[int, list[int]]) -> None:
         """Apply what the cloud reports, but only the values that changed."""

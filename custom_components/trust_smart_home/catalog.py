@@ -694,6 +694,38 @@ def level_to_brightness(level: int, spec: LightSpec) -> int:
     return max(0, min(255, round(level / spec.dim_max * 255)))
 
 
+def reads_locally(dev: TrustDevice) -> bool:
+    """Device types whose status is read from the hub on the LAN, when enabled.
+
+    Measured on a real hub (#2): 433 MHz switches, Zigbee dimmers, lights and
+    sensors answer with the same values as the cloud. Covers (Somfy and other
+    motors), the P1 meter, the alarm, rules and groups do not (zeros, or no
+    status at all), so they always come from the cloud. Other lights,
+    switches and Zigbee sensors are included without having been measured;
+    plausible_local_status() checks each device's first answer.
+    """
+    if dev.kind != "module":
+        return False
+    d = dev.description
+    if not d.supported or d.cover is not None or d.alarm or d.rule or d.scene:
+        return False
+    if d.light is not None or d.switch is not None:
+        return True
+    return d.online_index is not None and bool(d.binary_sensors or d.sensors)  # Zigbee sensors
+
+
+def plausible_local_status(local: list[int], cloud: list[int] | None) -> bool:
+    """Whether a device's first answer from the hub can replace the cloud's.
+
+    The hub answers with all zeros for states it does not keep (Somfy, P1,
+    measured in #2), so all zeros where the cloud has a value, or a list of a
+    different length, keeps the device on the cloud.
+    """
+    if cloud is None or len(local) != len(cloud):
+        return False
+    return any(local) or not any(cloud)
+
+
 def can_estimate_power(desc: Description) -> bool:
     """True for lights and plugs/switches (anything with an on/off state)."""
     return desc.light is not None or desc.switch is not None

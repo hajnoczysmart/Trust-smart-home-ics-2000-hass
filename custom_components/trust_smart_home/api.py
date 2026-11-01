@@ -16,6 +16,7 @@ import logging
 import random
 import re
 import socket
+import threading
 import time
 from typing import Any
 
@@ -41,6 +42,7 @@ MSG_NOT_ACKNOWLEDGE = 253
 BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
 BUSY_RETRIES = 20  # as the app's local transport
 LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
+STATUS_TIMEOUT = 0.5  # seconds to wait for a status answer (it takes about 0.1 s)
 PROBE_WAIT = 3.0  # seconds the diagnostics probe waits for one answer
 PROBE_SETTLE = 1.5  # pause between the probe's acknowledgement test runs
 VERSIONS_LEN = 16  # header bytes 13-28: global, settings, ... scene data versions
@@ -251,6 +253,10 @@ class TrustClient:
         self.home_id: str | None = None
         self.home_name: str | None = None
         self._versions: bytes | None = None  # hub data versions from the last reply
+        # One message at a time on the LAN, like the app's communication lock:
+        # a command waits for a status request in progress (about 0.1 s)
+        # instead of running into "busy".
+        self._lan_lock = threading.Lock()
 
     def close(self) -> None:
         """Release the HTTP connection pool."""
@@ -423,7 +429,9 @@ class TrustClient:
                 return
         self._send_cloud(frame)
 
-    def _exchange(self, frame: bytes, host: str, expect_data: bool = False) -> bytes:
+    def _exchange(
+        self, frame: bytes, host: str, expect_data: bool = False, timeout: float = 2.0
+    ) -> bytes:
         """Send a message on the LAN the way the app does and return the reply.
 
         - "busy" (NAK 17-20): wait 40-60 ms and send again, up to 20 times;
@@ -432,8 +440,14 @@ class TrustClient:
           waits about a second for the acknowledgement before it handles the
           next message (measured on a real hub, issue #2).
         """
+        with self._lan_lock:
+            return self._exchange_locked(frame, host, expect_data, timeout)
+
+    def _exchange_locked(
+        self, frame: bytes, host: str, expect_data: bool, timeout: float
+    ) -> bytes:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2)
+        sock.settimeout(timeout)
         try:
             reply = b""
             addr: Any = None
@@ -497,25 +511,28 @@ class TrustClient:
 
     # ---- statuses from the hub on the LAN (experimental) -------------------
 
-    def get_status_local(self, kind: str, entity_id: int, local_address: str) -> list[int] | None:
-        """One entity's function values asked from the hub (None if not answered).
+    def get_status_local(self, entity_id: int, local_address: str) -> list[int] | None:
+        """One device's function values asked from the hub (None if not answered).
 
-        The app never does this, so the request layout is a guess modelled on
-        the control message; the answer is expected in the cloud's status
-        layout ({"module": {"functions": [...]}}).
+        The app never does this; the layout was measured on a real hub (#2):
+        GET_ENTITY_STATUS with {"id": <id>} is answered with
+        {"module": {"id": ..., "functions": [...]}} (type 128). The answer is
+        acknowledged by _exchange, so the next request is answered at once.
         """
         frame = build_frame(
             self.mac or "",
             entity_id,
-            encrypt(json.dumps({kind: {"id": entity_id}}), self.aes_key or ""),
+            encrypt(json.dumps({"id": entity_id}), self.aes_key or ""),
             MSG_GET_ENTITY_STATUS,
         )
         try:
-            raw = self._exchange(frame, local_address, expect_data=True)
+            raw = self._exchange(
+                frame, local_address, expect_data=True, timeout=STATUS_TIMEOUT
+            )
             msg_type, _versions, text, _code = parse_reply(raw, self.aes_key or "")
         except (OSError, ValueError):
             return None
-        if msg_type == MSG_NOT_ACKNOWLEDGE:
+        if msg_type in (MSG_NOT_ACKNOWLEDGE, MSG_ACKNOWLEDGE):
             return None
         functions = _find_key(_loads(text), "functions")
         if not isinstance(functions, list):
@@ -523,21 +540,27 @@ class TrustClient:
         return [_as_int(v) for v in functions[:256]]
 
     def get_statuses_local(
-        self, entities: list[tuple[str, int]], local_address: str
-    ) -> dict[int, list[int]]:
-        """Statuses from the hub; empty when the hub does not answer the first one."""
+        self, entity_ids: list[int], local_address: str, budget: float = LOCAL_STATUS_BUDGET
+    ) -> tuple[dict[int, list[int]], int]:
+        """Statuses asked from the hub one by one, within ``budget`` seconds.
+
+        Returns the answers and how many devices were asked, so the caller can
+        continue with the rest next time. Stops early when the first three
+        requests all go unanswered (the hub is not reachable).
+        """
         out: dict[int, list[int]] = {}
-        deadline = time.monotonic() + LOCAL_STATUS_BUDGET
-        for n, (kind, entity_id) in enumerate(entities):
-            if time.monotonic() > deadline:
-                break  # the rest comes from the cloud this time
-            status = self.get_status_local(kind, entity_id, local_address)
-            if status is None:
-                if n == 0:
-                    return {}
-                continue
-            out[entity_id] = status
-        return out
+        deadline = time.monotonic() + budget
+        asked = 0
+        for entity_id in entity_ids:
+            if asked and time.monotonic() > deadline:
+                break
+            asked += 1
+            status = self.get_status_local(entity_id, local_address)
+            if status is not None:
+                out[entity_id] = status
+            elif asked >= 3 and not out:
+                break
+        return out, asked
 
     def probe_local_status(self, kind: str, entity_id: int, local_address: str) -> list[dict]:
         """Raw replies to a few status-request layouts, for the diagnostics file.
@@ -642,6 +665,12 @@ class TrustClient:
         ``ack_answer`` the answer is acknowledged the way the app acknowledges
         every message it receives from the hub.
         """
+        with self._lan_lock:
+            return self._exchange_traced_locked(frame, host, resend_on_busy, ack_answer)
+
+    def _exchange_traced_locked(
+        self, frame: bytes, host: str, resend_on_busy: bool, ack_answer: bool
+    ) -> tuple[bytes | None, dict[str, Any]]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(0.25)
         start = time.monotonic()
