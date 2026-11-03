@@ -40,6 +40,7 @@ async def async_get_config_entry_diagnostics(
         "read_on_lan": sorted(coordinator.local_ok),
         "kept_on_cloud": sorted(coordinator.local_excluded),
         "unavailable_cloud_down": sorted(coordinator.stale_ids),
+        "polls_without_hub_answer": coordinator._local_silent_rounds,
     }
     host = coordinator.local_address
     probe_dev = next(

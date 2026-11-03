@@ -174,8 +174,10 @@ hub directly for part of the devices:
 - **Checked first:** a device is only read from the hub after its first answer matches the
   cloud's (for example not all zeros where the cloud has a value). Devices that fail the check,
   or stop answering, stay on the cloud.
-- **When the cloud is down:** devices read from the hub stay up to date; the others are shown
-  as unavailable rather than with an old state.
+- **When the cloud is down:** devices read from the hub stay up to date. If the hub does not
+  answer for a poll or two, they keep their last value; after `LOCAL_MISSES` (3) such polls
+  they are shown as unavailable. The others are unavailable as soon as the cloud fails, rather
+  than showing an old state.
 
 Each device takes about 0.1 s (the hub answers one request at a time; the integration
 acknowledges each answer like the app, otherwise the hub would pause for a second). Up to

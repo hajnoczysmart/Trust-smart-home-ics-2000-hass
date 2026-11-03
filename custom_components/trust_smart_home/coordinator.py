@@ -103,6 +103,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._local_misses: dict[int, int] = {}
         self._local_next = 0  # where the next round starts (round robin)
         self._local_retry_at = 0.0
+        self._local_silent_rounds = 0  # polls in a row without any answer from the hub
         # devices whose state could not be refreshed because the cloud failed
         # while the hub answered on the LAN: shown as unavailable
         self.stale_ids: set[int] = set()
@@ -180,7 +181,12 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     async def _async_update_data(self) -> dict[int, list[int]]:
         """Statuses from the cloud, and (when the experimental option is on)
         from the hub on the LAN for the devices that answer correctly there.
-        Both run at the same time, so a poll does not take longer."""
+        Both run at the same time, so a poll does not take longer.
+
+        A device read on the LAN keeps its last value through up to LOCAL_MISSES
+        polls in which the hub does not answer; only then, and when the cloud
+        cannot provide it either, is it shown as unavailable. The poll itself
+        fails only when there is no value at all to show."""
         ids = self._poll_ids()
         order = self._local_candidates()
         in_order = set(order)
@@ -222,8 +228,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 got, asked = local_res
             fresh.update(self._use_local(order, got, asked, cloud))
             if not got and cloud_error is None:
-                # the hub did not answer this round: these come from the cloud now
-                missing = [i for i in order if i in self.local_ok]
+                # the hub did not answer this round: take these from the cloud now
+                missing = [i for i in order[:asked] if i in self.local_ok]
                 if missing:
                     try:
                         fresh.update(
@@ -236,19 +242,25 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                     except TrustApiError as err:
                         cloud_error = err
 
-        if cloud_error is not None:
-            local_now = [i for i in fresh if i in self.local_ok]
-            if not local_now:
-                raise UpdateFailed(str(cloud_error)) from cloud_error
-            self.stale_ids = {
-                i for i in ids if i not in self.local_ok and not self._follows_local(i)
-            }
-            _LOGGER.debug(
-                "Cloud unavailable (%s); %d devices read on the LAN", cloud_error, len(local_now)
-            )
-        else:
+        if cloud_error is None:
             self.stale_ids = set()
+            self._merge(fresh)
+            return {k: list(v) for k, v in self._statuses.items()}
+
+        # The cloud failed. Keep the last known values; devices that are not
+        # refreshed (neither from the cloud nor from the hub) are unavailable,
+        # except those read on the LAN that have missed fewer than LOCAL_MISSES polls.
+        _LOGGER.debug("Cloud unavailable (%s)", cloud_error)
         self._merge(fresh)
+        if not self._statuses:
+            raise UpdateFailed(str(cloud_error)) from cloud_error
+        self.stale_ids = {
+            i
+            for i in ids
+            if i not in fresh
+            and not (i in self.local_ok and self._local_misses.get(i, 0) < LOCAL_MISSES)
+            and not self._follows_local(i)
+        }
         return {k: list(v) for k, v in self._statuses.items()}
 
     def _follows_local(self, entity_id: int) -> bool:
@@ -266,16 +278,25 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         cloud: dict[int, list[int]],
     ) -> dict[int, list[int]]:
         """The hub's answers that may be used, and which devices are read on
-        the LAN. A device's first answer is checked against the cloud's."""
+        the LAN. A device's first answer is checked against the cloud's.
+
+        A round without any answer is only counted: the hub is paused for
+        LOCAL_RETRY seconds after LOCAL_MISSES such rounds in a row (not after
+        one, which the hub does while it is busy with the cloud)."""
         use: dict[int, list[int]] = {}
         if not got:
-            if self.local_status is None:
-                _LOGGER.info("The hub does not answer status requests on the LAN; using the cloud")
-                self.local_status = False
-            else:
-                _LOGGER.debug("No status answers from the hub; trying again in %d s", LOCAL_RETRY)
-            self._local_retry_at = time.monotonic() + LOCAL_RETRY
+            self._local_silent_rounds += 1
+            for entity_id in order[:asked]:
+                self._count_miss(entity_id)
+            if self._local_silent_rounds >= LOCAL_MISSES:
+                if self.local_status is None:
+                    _LOGGER.info("The hub does not answer status requests on the LAN; using the cloud")
+                    self.local_status = False
+                self._local_silent_rounds = 0
+                self._local_retry_at = time.monotonic() + LOCAL_RETRY
+                _LOGGER.debug("The hub stopped answering on the LAN; trying again in %d s", LOCAL_RETRY)
             return use
+        self._local_silent_rounds = 0
         if self.local_status is not True:
             _LOGGER.info(
                 "Reading device states from the hub on the LAN (experimental, "
@@ -286,17 +307,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         for entity_id in order[:asked]:
             status = got.get(entity_id)
             if status is None:
-                misses = self._local_misses.get(entity_id, 0) + 1
-                self._local_misses[entity_id] = misses
-                if misses >= LOCAL_MISSES:
-                    self._local_misses.pop(entity_id, None)
-                    if entity_id in self.local_ok:
-                        self.local_ok.discard(entity_id)  # checked again later
-                    else:
-                        self.local_excluded.add(entity_id)
-                        _LOGGER.debug(
-                            "Device %s does not answer on the LAN; using the cloud", entity_id
-                        )
+                self._count_miss(entity_id)
                 continue
             self._local_misses.pop(entity_id, None)
             if entity_id in self.local_ok:
@@ -311,6 +322,18 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                         entity_id,
                     )
         return use
+
+    def _count_miss(self, entity_id: int) -> None:
+        """A device the hub did not answer: after LOCAL_MISSES such polls it is
+        checked against the cloud again (or kept on the cloud if it never fit)."""
+        misses = self._local_misses.get(entity_id, 0) + 1
+        self._local_misses[entity_id] = misses
+        if misses < LOCAL_MISSES:
+            return
+        self._local_misses.pop(entity_id, None)
+        if entity_id in self.local_ok:
+            self.local_ok.discard(entity_id)
+            _LOGGER.debug("Device %s stopped answering on the LAN; checking it again later", entity_id)
 
     def _merge(self, fresh: dict[int, list[int]]) -> None:
         """Apply what the cloud reports, but only the values that changed."""
