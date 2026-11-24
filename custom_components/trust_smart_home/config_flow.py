@@ -18,6 +18,11 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .api import TrustApiError, TrustAuthError, TrustClient
 from .catalog import can_estimate_power
@@ -25,6 +30,7 @@ from .const import (
     BINARY_DEVICE_CLASSES,
     CONF_HOME,
     CONF_MAPPINGS,
+    CONF_ALARM_CODE,
     CONF_LOCAL_STATUS,
     CONF_POWER,
     CONF_SCAN_INTERVAL,
@@ -182,11 +188,15 @@ class TrustOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
+            # an emptied field means no code (an omitted key would keep the old one)
+            code = str(user_input.get(CONF_ALARM_CODE, "") or "").strip()
             return self.async_create_entry(
-                title="", data={**self.config_entry.options, **user_input}
+                title="",
+                data={**self.config_entry.options, **user_input, CONF_ALARM_CODE: code},
             )
         current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         local = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
+        code = str(self.config_entry.options.get(CONF_ALARM_CODE, "") or "")
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
@@ -195,6 +205,10 @@ class TrustOptionsFlow(OptionsFlow):
                         vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
                     ),
                     vol.Required(CONF_LOCAL_STATUS, default=local): bool,
+                    vol.Optional(
+                        CONF_ALARM_CODE,
+                        description={"suggested_value": code},
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 }
             ),
         )

@@ -18,6 +18,7 @@ MAX_POWER_WATTS = 3680  # a 16 A socket
 
 CONF_SCAN_INTERVAL = "scan_interval"  # seconds between status polls
 CONF_LOCAL_STATUS = "local_status"  # read statuses from the hub on the LAN (experimental, off)
+CONF_ALARM_CODE = "alarm_code"  # optional code to arm and disarm the alarm (empty = no code)
 DEFAULT_SCAN_INTERVAL = 3
 MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 60

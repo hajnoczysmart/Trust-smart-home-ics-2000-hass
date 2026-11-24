@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_HOME, DOMAIN
+from .const import CONF_ALARM_CODE, CONF_HOME, DOMAIN
 
 TO_REDACT = {CONF_EMAIL, CONF_PASSWORD, CONF_IP_ADDRESS, CONF_HOME, "aes_key", "mac"}
 
@@ -26,7 +26,7 @@ async def async_get_config_entry_diagnostics(
     result: dict[str, Any] = {
         "entry": {
             "data": async_redact_data(dict(entry.data), TO_REDACT),
-            "options": dict(entry.options),
+            "options": async_redact_data(dict(entry.options), {CONF_ALARM_CODE}),
         },
     }
     if coordinator is None:

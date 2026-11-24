@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 from datetime import timedelta
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
     AlarmControlPanelState,
+    CodeFormat,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
@@ -24,7 +26,7 @@ from .catalog import (
     ALARM_STATE_INDEX,
     SECURITY_STATES,
 )
-from .const import DOMAIN, WALKOUT_SECONDS
+from .const import CONF_ALARM_CODE, DOMAIN, WALKOUT_SECONDS
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
 
@@ -98,7 +100,6 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     During the walkout the entity counts down an estimate of the time left.
     """
 
-    _attr_code_arm_required = False
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY | AlarmControlPanelEntityFeature.TRIGGER
     )
@@ -113,6 +114,34 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     def _security_state(self) -> str | None:
         raw = self.value(ALARM_STATE_INDEX)
         return SECURITY_STATES.get(raw) if raw is not None else None
+
+    @property
+    def _code(self) -> str:
+        """The code set in the options (empty = arming and disarming need no code)."""
+        return str(self.coordinator.config_entry.options.get(CONF_ALARM_CODE, "") or "")
+
+    @property
+    def code_arm_required(self) -> bool:
+        return bool(self._code)
+
+    @property
+    def code_disarm_required(self) -> bool:
+        return bool(self._code)
+
+    @property
+    def code_format(self) -> CodeFormat | None:
+        code = self._code
+        if not code:
+            return None
+        return CodeFormat.NUMBER if code.isdigit() else CodeFormat.TEXT
+
+    def _check_code(self, code: str | None) -> None:
+        """Arming and disarming need the code when one is set. Trigger (panic) does not."""
+        expected = self._code
+        if not expected:
+            return
+        if not hmac.compare_digest((code or "").strip(), expected):
+            raise ServiceValidationError("Invalid alarm code")
 
     @property
     def available(self) -> bool:
@@ -164,9 +193,11 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
         super()._handle_coordinator_update()
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
+        self._check_code(code)
         await self.send(ALARM_COMMAND_INDEX, ALARM_ARM)
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
+        self._check_code(code)
         await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
 
     async def async_alarm_trigger(self, code: str | None = None) -> None:
