@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import time
 from datetime import timedelta
 
 from homeassistant.components.alarm_control_panel import (
@@ -96,8 +97,12 @@ ARMING_OR_ARMED = ("pre_walkout", "walkout", "armed")
 # remote disarmed the system (function 15 stays at arm), arming needs a disarm
 # first. Wait this long after it so the hub's disarm rule has finished.
 ARM_PREPARE_WAIT = 2.0
+ARM_PREPARE_MAX = 6.0  # longest wait for the hub to report disarmed before arming
 CONTACT_OPEN_INDEX = 1  # 868 MHz ContactSensor: index 1 = 22 opened, 23 closed
 CONTACT_OPEN = 22
+# Like the app: once a command is accepted, show the expected state at once
+# (arming / disarmed) until the hub reports a change, at most this long.
+PENDING_MAX = 60.0
 
 
 class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
@@ -119,6 +124,8 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator: TrustCoordinator, device) -> None:
         super().__init__(coordinator, device, "alarm")
         self._walkout_started = None  # when the walkout was first seen
+        # (state shown, raw states it replaces, since): set after a command
+        self._pending: tuple[AlarmControlPanelState, frozenset[str], float] | None = None
 
     @property
     def _security_state(self) -> str | None:
@@ -161,7 +168,17 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     @property
     def alarm_state(self) -> AlarmControlPanelState | None:
-        return _STATE_MAP.get(self._security_state or "")
+        raw = self._security_state or ""
+        if self._pending is not None:
+            shown, replaces, since = self._pending
+            if raw in replaces and time.monotonic() - since < PENDING_MAX:
+                return shown
+        return _STATE_MAP.get(raw)
+
+    def _set_pending(self, shown: AlarmControlPanelState, *also: str) -> None:
+        replaces = frozenset({self._security_state or "", *also})
+        self._pending = (shown, replaces, time.monotonic())
+        self.async_write_ha_state()
 
     @property
     def walkout_remaining(self) -> int | None:
@@ -204,6 +221,12 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     @callback
     def _tick_walkout(self, _now) -> None:
+        if self._pending is not None and (
+            (self._security_state or "") not in self._pending[1]
+            or time.monotonic() - self._pending[2] >= PENDING_MAX
+        ):
+            self._pending = None  # the hub reported a change, or it took too long
+            self.async_write_ha_state()
         if self._walkout_started is not None:
             self.async_write_ha_state()
 
@@ -221,16 +244,30 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
         state = self._security_state
         if state in ARMING_OR_ARMED:
             return  # already arming or armed
-        if state != "disarmed" or self.value(ALARM_COMMAND_INDEX) != ALARM_DISARM:
-            # arm error, alarm, unknown, or function 15 still at arm (remote
-            # disarm): the hub's arm rule would not start, so disarm first
-            await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
-            await asyncio.sleep(ARM_PREPARE_WAIT)
-        await self.send(ALARM_COMMAND_INDEX, ALARM_ARM)
+        # shown as arming at once; during a disarm first, also over "disarmed"
+        self._set_pending(AlarmControlPanelState.ARMING, "disarmed")
+        try:
+            if state != "disarmed" or self.value(ALARM_COMMAND_INDEX) != ALARM_DISARM:
+                # arm error, alarm, unknown, or function 15 still at arm (remote
+                # disarm): the hub's arm rule would not start, so disarm first
+                # and wait until the hub reports disarmed (or ARM_PREPARE_MAX)
+                await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+                deadline = time.monotonic() + ARM_PREPARE_MAX
+                await asyncio.sleep(ARM_PREPARE_WAIT)
+                while self._security_state != "disarmed" and time.monotonic() < deadline:
+                    await asyncio.sleep(0.25)
+                self._set_pending(AlarmControlPanelState.ARMING, "disarmed")
+            await self.send(ALARM_COMMAND_INDEX, ALARM_ARM)
+        except Exception:
+            self._pending = None
+            self.async_write_ha_state()
+            raise
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         self._check_code(code)
         await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+        if self._security_state != "disarmed":
+            self._set_pending(AlarmControlPanelState.DISARMED)
 
     async def async_alarm_trigger(self, code: str | None = None) -> None:
         await async_panic(self.coordinator)

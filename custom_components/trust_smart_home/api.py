@@ -41,6 +41,9 @@ MSG_ACKNOWLEDGE = 252
 MSG_NOT_ACKNOWLEDGE = 253
 BUSY_ERRORS = (17, 18, 19, 20)  # MessageError BUSY, BUSY_SYNCING, BUSY_PAIRING, BUSY_SCANNING
 BUSY_RETRIES = 20  # as the app's local transport
+# Commands wait longer for a busy hub (about 3 s) before going through the
+# cloud, which takes seconds to tens of seconds (measured)
+COMMAND_BUSY_RETRIES = 60
 LOCAL_STATUS_BUDGET = 2.0  # seconds per poll for statuses asked from the hub
 STATUS_TIMEOUT = 0.5  # seconds to wait for a status answer (it takes about 0.1 s)
 PROBE_WAIT = 3.0  # seconds the diagnostics probe waits for one answer
@@ -414,7 +417,9 @@ class TrustClient:
             try:
                 # Like the app: when the hub answers "busy" (e.g. it is still
                 # handling the previous command), wait a moment and send again.
-                reply = self._exchange(frame, local_address)
+                reply = self._exchange(
+                    frame, local_address, busy_retries=COMMAND_BUSY_RETRIES
+                )
             except OSError as err:
                 _LOGGER.debug("Local send to %s failed (%s), using cloud", local_address, err)
             else:
@@ -430,7 +435,12 @@ class TrustClient:
         self._send_cloud(frame)
 
     def _exchange(
-        self, frame: bytes, host: str, expect_data: bool = False, timeout: float = 2.0
+        self,
+        frame: bytes,
+        host: str,
+        expect_data: bool = False,
+        timeout: float = 2.0,
+        busy_retries: int = BUSY_RETRIES,
     ) -> bytes:
         """Send a message on the LAN the way the app does and return the reply.
 
@@ -441,17 +451,22 @@ class TrustClient:
           next message (measured on a real hub, issue #2).
         """
         with self._lan_lock:
-            return self._exchange_locked(frame, host, expect_data, timeout)
+            return self._exchange_locked(frame, host, expect_data, timeout, busy_retries)
 
     def _exchange_locked(
-        self, frame: bytes, host: str, expect_data: bool, timeout: float
+        self,
+        frame: bytes,
+        host: str,
+        expect_data: bool,
+        timeout: float,
+        busy_retries: int = BUSY_RETRIES,
     ) -> bytes:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         try:
             reply = b""
             addr: Any = None
-            for _attempt in range(BUSY_RETRIES + 1):
+            for _attempt in range(busy_retries + 1):
                 sock.sendto(frame, (host, LOCAL_PORT))
                 reply, addr = sock.recvfrom(8192)
                 if len(reply) > 43 and reply[2] == MSG_NOT_ACKNOWLEDGE and reply[43] in BUSY_ERRORS:

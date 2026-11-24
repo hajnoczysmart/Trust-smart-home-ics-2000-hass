@@ -46,7 +46,7 @@ cleanest way is to delete the old integration entry and add it again.
 | Security system remote, 868 MHz | `event` (arm / disarm), low battery |
 | Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button, *Sound alarm* and *Panic alarm* buttons (both disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
-| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button and *Panic mode* switch on the same device; attributes `walkout_remaining` (countdown while arming; the app's walkout is a fixed 85 s), `cloud_stale` and `open_contacts` (open security contact sensors, which make arming fail); arming after an arm error or a disarm by the remote sends disarm first, then arm about 2 s later; optional alarm code for arming and disarming (*Alarm settings* in the options menu, empty = no code; trigger/panic never asks for it; leave the entity's own *Default code* empty, or Home Assistant never asks) |
+| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button and *Panic mode* switch on the same device; attributes `walkout_remaining` (countdown while arming; the app's walkout is a fixed 85 s), `cloud_stale` and `open_contacts` (open security contact sensors, which make arming fail); arming after an arm error or a disarm by the remote sends disarm first, then arm once the hub reports disarmed; like the app, the alarm shows *arming* (or *disarmed*) as soon as the command is sent, until the hub reports the change (at most 60 s); optional alarm code for arming and disarming (*Alarm settings* in the options menu, empty = no code; trigger/panic never asks for it; leave the entity's own *Default code* empty, or Home Assistant never asks) |
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
@@ -186,7 +186,7 @@ their own that does not wait for the cloud. Measured on a real hub: the cloud to
 (median, up to 19 s) per status request, the hub answered each security device in about
 90 ms with the same values. This is independent of the option below. Each device's first
 answer must match the cloud's; a device that does not match stays on the cloud. When the
-hub does not answer three rounds in a row, the cloud takes over for a minute. The
+hub does not answer three rounds in a row, the cloud takes over for a minute. Commands go first: the loop pauses while a command is sent and for 2 s after it, and a command waits up to about 3 s for a busy hub before it goes through the cloud. The
 diagnostics file shows which devices are read on the LAN (`security_lan`).
 
 ## Statuses from the hub (experimental)

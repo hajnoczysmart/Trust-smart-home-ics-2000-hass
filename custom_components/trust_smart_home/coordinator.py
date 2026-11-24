@@ -58,6 +58,9 @@ SECURITY_TYPES = {16, 17, 18, 19, 20, 240}
 SECURITY_LAN_INTERVAL = timedelta(seconds=1)
 SECURITY_LAN_MISSES = 3  # rounds without any answer before pausing (cloud takes over)
 SECURITY_LAN_RETRY = 60.0  # seconds before trying the LAN again after a pause
+# Commands go first: the loop stops while one is sent and stays quiet a moment
+# after it, while the hub runs its rules (e.g. arming the sensors)
+SECURITY_QUIET_AFTER_COMMAND = 2.0
 STALE_GRACE = 30.0  # seconds a device keeps its last value while the cloud fails (then unavailable)
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,6 +130,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._security_misses = 0
         self._security_paused_until = 0.0
         self._security_running = False
+        self._commands_in_flight = 0
+        self._security_quiet_until = 0.0
         self.security_lan_ms: deque[float] = deque(maxlen=60)
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
@@ -313,7 +318,9 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         SECURITY_LAN_MISSES rounds without an answer the cloud takes over for
         SECURITY_LAN_RETRY seconds."""
         host = self.local_address
-        if not host or self._security_running:
+        if not host or self._security_running or self._commands_in_flight:
+            return
+        if time.monotonic() < self._security_quiet_until:
             return
         if time.monotonic() < self._security_paused_until:
             return
@@ -376,6 +383,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     def _read_security(self, ids: list[int], host: str) -> dict[int, list[int]]:
         out: dict[int, list[int]] = {}
         for entity_id in ids:
+            if self._commands_in_flight:
+                break  # a command is waiting for the LAN: let it go first
             status = self.client.get_status_local(entity_id, host)
             if status is not None:
                 out[entity_id] = status
@@ -579,12 +588,16 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         Momentary actions (button presses) pass optimistic=False: they trigger
         something but do not set a lasting state.
         """
+        self._commands_in_flight += 1
         try:
             await self.hass.async_add_executor_job(
                 self.client.send, device.kind, device.id, index, int(value), self.local_address
             )
         except TrustApiError as err:
             raise HomeAssistantError(f"Trust Smart Home: {err}") from err
+        finally:
+            self._commands_in_flight -= 1
+            self._security_quiet_until = time.monotonic() + SECURITY_QUIET_AFTER_COMMAND
         if device.description.events:
             # Transmitters: wait for the hub instead of guessing, and remember
             # what we sent so the resulting change is not reported as a press.
