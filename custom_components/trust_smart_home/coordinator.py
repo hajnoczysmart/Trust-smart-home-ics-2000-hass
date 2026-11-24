@@ -80,9 +80,10 @@ SLOW_PER_ROUND = 3
 # the cloud often fails or takes 15-38 s between answers (measured), so 30 s made
 # cloud-only devices flicker to unavailable every few minutes
 STALE_GRACE = 300.0
-# After our own command, a value read on the LAN may still be the old one for a
-# moment; within this many seconds only changes are applied, as for the cloud
-LAN_TRUST_DELAY = 5.0
+# After our own command the hub reports the old value (or values of earlier
+# commands still queued) for a while: measured up to 6 s while a slider is moved.
+# A commanded value stays shown until the hub reports it, at most this long.
+COMMAND_HOLD = 15.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -541,10 +542,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         """Apply what the cloud reports, but only the values that changed.
 
         ``authoritative`` (values read from the hub on the LAN, which are current):
-        also correct a shown value that differs from the hub's, unless we sent a
-        command for it in the last LAN_TRUST_DELAY seconds. Otherwise a value we
-        set ourselves (e.g. the colour pointer after a colour command) could stay
-        shown although the hub never changed it, because only changes are applied."""
+        also correct a shown value that differs from the hub's. Otherwise a value
+        we set ourselves (e.g. the colour pointer after a colour command) could
+        stay shown although the hub never changed it. Exception: a value we sent
+        a command for stays shown until the hub reports it (at most COMMAND_HOLD
+        seconds); the colour (pointer and its values) is treated as one."""
         changed: set[tuple[int, int]] = set()
         first: set[int] = set()
         for eid, new in fresh.items():
@@ -556,9 +558,18 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 first.add(eid)
             else:
                 shown = list(shown)
+                colour_held, colour = (
+                    self._colour_held(eid, new) if authoritative else (False, ())
+                )
                 for i, value in enumerate(new):
+                    if authoritative:
+                        if i in colour:
+                            if colour_held:
+                                continue  # the hub has not applied our colour yet
+                        elif self._held(eid, i, value):
+                            continue  # the hub has not applied our command yet
                     differs = i >= len(shown) or shown[i] != value
-                    correct = authoritative and differs and not self._recently_sent(eid, i)
+                    correct = authoritative and differs
                     if i >= len(old) or value != old[i] or correct:
                         if not correct and self._is_late_echo(eid, i, value):
                             continue
@@ -649,9 +660,45 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             return False  # the newest command confirmed, or no command of ours lately
         return any(sent == value for sent, _t in history)
 
-    def _recently_sent(self, eid: int, index: int) -> bool:
+    def _held(self, eid: int, index: int, value: int) -> bool:
+        """True while the hub reports something else than our latest command
+        for this value (at most COMMAND_HOLD seconds after it)."""
         history = self._sent.get((eid, index))
-        return bool(history) and time.monotonic() - history[-1][1] < LAN_TRUST_DELAY
+        if not history:
+            return False
+        latest, sent_at = history[-1]
+        return value != latest and time.monotonic() - sent_at < COMMAND_HOLD
+
+    def _colour_held(self, eid: int, new: list[int]) -> tuple[bool, tuple[int, ...]]:
+        """(held, colour indexes) of a Zigbee colour light read on the LAN.
+
+        Held while the hub does not yet report our latest colour command: colour
+        temperature m sent to index 9 is reported as pointer 9 with [9] = m, or
+        (RGB lights, measured) pointer 5 with [5] = m; hue/saturation h sent to
+        index 8 as pointer 8 (or 12) with [8] = h."""
+        dev = self.devices.get(eid)
+        spec = dev.description.light if dev is not None else None
+        if spec is None or spec.pointer_index is None:
+            return False, ()
+        colour = tuple(
+            i for i in (spec.hs_index, spec.ct_index, 5, spec.pointer_index) if i is not None
+        )
+        latest: tuple[int, int, float] | None = None
+        for index in (spec.hs_index, spec.ct_index):
+            history = self._sent.get((eid, index)) if index is not None else None
+            if history and (latest is None or history[-1][1] > latest[2]):
+                latest = (index, history[-1][0], history[-1][1])
+        if latest is None or time.monotonic() - latest[2] >= COMMAND_HOLD:
+            return False, colour
+        index, value, _at = latest
+        pointer = status_value(new, spec.pointer_index)
+        if index == spec.ct_index:
+            done = (pointer == 9 and status_value(new, index) == value) or (
+                pointer == 5 and status_value(new, 5) == value
+            )
+        else:
+            done = pointer in (8, 12) and status_value(new, index) == value
+        return not done, colour
 
     def _remember_sent(self, eid: int, index: int, value: int) -> None:
         history = self._sent.setdefault((eid, index), deque(maxlen=128))
