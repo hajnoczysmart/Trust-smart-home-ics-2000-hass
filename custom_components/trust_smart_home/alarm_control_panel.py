@@ -183,8 +183,8 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     @property
     def walkout_remaining(self) -> int | None:
         """Estimated seconds left before the alarm is armed, None outside a walkout."""
-        if self._walkout_started is None:
-            return None
+        if self._walkout_started is None or self.alarm_state != AlarmControlPanelState.ARMING:
+            return None  # also when a disarm was just sent
         elapsed = (dt_util.utcnow() - self._walkout_started).total_seconds()
         return max(0, round(WALKOUT_SECONDS - elapsed))
 
@@ -265,9 +265,20 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         self._check_code(code)
-        await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+        previous = self._pending
         if self._security_state != "disarmed":
-            self._set_pending(AlarmControlPanelState.DISARMED)
+            # Like the app: disarmed at once, the countdown stops; the arming
+            # states are covered too, in case the walkout starts meanwhile
+            self._set_pending(AlarmControlPanelState.DISARMED, *WALKOUT_STATES)
+        else:
+            self._pending = None  # e.g. disarm during "arming" shown before the hub moved
+            self.async_write_ha_state()
+        try:
+            await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+        except Exception:
+            self._pending = previous
+            self.async_write_ha_state()
+            raise
 
     async def async_alarm_trigger(self, code: str | None = None) -> None:
         await async_panic(self.coordinator)
