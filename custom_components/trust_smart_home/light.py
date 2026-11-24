@@ -20,6 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import color as color_util
 
 from .catalog import (
     EFFECT_COLORLOOP,
@@ -42,10 +43,16 @@ from .entity import TrustEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-# ZigbeeLight colour pointer (index 10): which colour attribute was set last
-# (ColorPointer: 5 xy, 6 hue, 7 saturation, 9 colour temperature, 12 hue+saturation)
+# ZigbeeLight colour pointer (index 10): the index that holds the current colour,
+# as the app reads it (ZigbeeLight.getColor): 5 xy (index 5), 6/7 hue/lightness,
+# 8 hue+saturation (index 8), 9 colour temperature (index 9); anything else
+# (0, ...) means no colour set: the app shows warm white.
+POINTER_XY = 5
 POINTER_COLOR_TEMP = 9
-POINTER_HS = 12
+POINTER_HS = 8
+HS_POINTERS = (6, 7, 8, 12)  # 12: what older versions of this integration set
+XY_INDEX = 5
+WARM_WHITE_KELVIN = 2700  # ZigbeeLight.WARM_WHITE_COLOR_TEMPERATURE
 
 # "police": red/blue flashing done by the integration (not a bulb effect).
 # One colour command per light per step, so it is only offered when the hub is
@@ -120,23 +127,58 @@ class TrustLight(TrustEntity, LightEntity):
             return None
         return level_to_brightness(level, self.spec)
 
+    def _colour(self) -> tuple[str, Any]:
+        """The current colour the way the app reads it, from the pointer:
+        ("hs", (hue, sat)) or ("ct", kelvin).
+
+        Measured on a real hub: after a colour temperature command, RGB lights
+        report the mired value in index 5 with pointer 5 (not an xy value: its
+        high half is 0), so such a value is read as colour temperature."""
+        pointer = self.value(self.spec.pointer_index)
+        if pointer in HS_POINTERS and self.spec.hs_index is not None:
+            raw = self.value(self.spec.hs_index)
+            if raw is not None:
+                return "hs", decode_hs(raw)
+        if pointer == POINTER_XY:
+            raw = self.value(XY_INDEX)
+            if raw and raw >> 16:
+                x, y = (raw & 0xFFFF) / 65535, (raw >> 16) / 65535
+                return "hs", color_util.color_xy_to_hs(x, y)
+            if raw and (kelvin := mired_to_kelvin(raw)):
+                return "ct", kelvin
+        if pointer == POINTER_COLOR_TEMP or pointer not in HS_POINTERS:
+            mired = self.value(self.spec.ct_index)
+            kelvin = mired_to_kelvin(mired) if mired else None
+            return "ct", kelvin or WARM_WHITE_KELVIN
+        raw = self.value(self.spec.hs_index)
+        return "hs", decode_hs(raw or 0)
+
     @property
     def color_mode(self) -> ColorMode:
         modes = self._attr_supported_color_modes or set()
         if ColorMode.HS in modes and ColorMode.COLOR_TEMP in modes:
-            pointer = self.value(self.spec.pointer_index)
-            return ColorMode.COLOR_TEMP if pointer == POINTER_COLOR_TEMP else ColorMode.HS
+            if self.spec.pointer_index is None:
+                return ColorMode.HS
+            return ColorMode.HS if self._colour()[0] == "hs" else ColorMode.COLOR_TEMP
         return next(iter(modes))
 
     @property
     def hs_color(self) -> tuple[float, float] | None:
+        if self.spec.pointer_index is not None and self.spec.ct_index is not None:
+            kind, value = self._colour()
+            if kind == "hs":
+                return value
         raw = self.value(self.spec.hs_index)
         return decode_hs(raw) if raw is not None else None
 
     @property
     def color_temp_kelvin(self) -> int | None:
-        mired = self.value(self.spec.ct_index)
-        kelvin = mired_to_kelvin(mired) if mired is not None else None
+        if self.spec.pointer_index is not None and self.spec.hs_index is not None:
+            kind, value = self._colour()
+            kelvin = value if kind == "ct" else None
+        else:
+            mired = self.value(self.spec.ct_index)
+            kelvin = mired_to_kelvin(mired) if mired is not None else None
         if kelvin is None:
             return None
         return max(MIN_KELVIN, min(MAX_KELVIN, kelvin))
@@ -314,9 +356,11 @@ class TrustLight(TrustEntity, LightEntity):
         if self._police_task is not None:
             return
         spec = self.spec
-        pointer = self.value(spec.pointer_index)
-        if pointer == POINTER_COLOR_TEMP and spec.ct_index is not None and self.value(spec.ct_index):
-            self._police_restore = (spec.ct_index, self.value(spec.ct_index) or 0)
+        kind, colour = self._colour() if spec.pointer_index is not None else ("", None)
+        if kind == "ct" and spec.ct_index is not None:
+            self._police_restore = (spec.ct_index, kelvin_to_mired(colour))
+        elif kind == "hs" and spec.hs_index is not None:
+            self._police_restore = (spec.hs_index, encode_hs(*colour))
         elif spec.hs_index is not None and self.value(spec.hs_index) is not None:
             self._police_restore = (spec.hs_index, self.value(spec.hs_index) or 0)
         else:

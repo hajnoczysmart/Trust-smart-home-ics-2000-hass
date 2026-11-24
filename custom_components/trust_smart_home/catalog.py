@@ -641,15 +641,25 @@ def group_state_indexes(desc: Description) -> tuple[int | None, list[int]]:
     """(on/off index, other indexes) a group derives from its members."""
     if desc.light is not None:
         spec = desc.light
+        # with a colour pointer, index 5 can hold the colour too (xy, or the
+        # colour temperature of RGB lights, measured)
+        xy = 5 if spec.pointer_index is not None else None
         others = [
             i
-            for i in (spec.dim_index, spec.hs_index, spec.ct_index, spec.pointer_index, spec.effect_index)
+            for i in (spec.dim_index, spec.hs_index, spec.ct_index, xy, spec.pointer_index, spec.effect_index)
             if i is not None
         ]
         return spec.on_index, others
     if desc.switch is not None:
         return desc.switch.index, []
     return None, []
+
+
+def member_online(status: list[int] | None) -> bool:
+    """A Zigbee group member is offline when its network connection (index 0)
+    is 0 (ZigbeeDevice.INDEX_NETWORK_CONNECTION): it reports zeros then, which
+    must not pull the group's brightness or colour."""
+    return bool(status) and status_value(status, 0) != 0
 
 
 def derive_group_status(
@@ -662,7 +672,7 @@ def derive_group_status(
     that are on; colour values from the first member that is on.
     """
     on_index, others = group_state_indexes(desc)
-    statuses = [m for m in members if m]
+    statuses = [m for m in members if m and member_online(m)]
     if on_index is None or not statuses:
         return own
     result = list(own or [])

@@ -28,6 +28,7 @@ from .catalog import (
     TrustDevice,
     derive_group_status,
     group_state_indexes,
+    member_online,
     plausible_local_status,
     reads_locally,
     status_value,
@@ -595,8 +596,27 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             if derived is not None:
                 self._statuses[dev.id] = derived
             return
+        light = dev.description.light
+        colour = (
+            [i for i in (light.hs_index, light.ct_index, 5, light.pointer_index) if i is not None]
+            if light is not None and light.pointer_index is not None
+            else []
+        )
+        online = [m for m in dev.members if member_online(self._statuses.get(m))]
+        # the colour is one setting (pointer + the value it points to): take all
+        # of it from the member that changed last, never mix members
+        colour_movers = [m for m in online if any((m, i) in changed for i in colour)]
+        if colour_movers:
+            source = self._statuses.get(colour_movers[-1])
+            for index in colour:
+                value = status_value(source, index)
+                if value is not None:
+                    self._write(dev.id, index, value, "group")
         for index in [on_index, *others]:
-            movers = [m for m in dev.members if (m, index) in changed]
+            if index in colour:
+                continue
+            # offline members report zeros: they do not move the group
+            movers = [m for m in online if (m, index) in changed]
             if not movers:
                 continue
             if index == on_index:
