@@ -110,6 +110,10 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self.stale_ids: set[int] = set()
         # when each device last got a fresh value (cloud or hub), monotonic seconds
         self._last_seen: dict[int, float] = {}
+        # timing, for the diagnostics file: how long the cloud status requests
+        # take (ms) and when the polls started (monotonic seconds)
+        self.cloud_poll_ms: deque[float] = deque(maxlen=60)
+        self.poll_starts: deque[float] = deque(maxlen=60)
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
@@ -190,6 +194,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         polls in which the hub does not answer; only then, and when the cloud
         cannot provide it either, is it shown as unavailable. The poll itself
         fails only when there is no value at all to show."""
+        self.poll_starts.append(time.monotonic())
         ids = self._poll_ids()
         order = self._local_candidates()
         in_order = set(order)
@@ -202,7 +207,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             else None
         )
         cloud_job = (
-            self.hass.async_add_executor_job(self.client.get_statuses, cloud_ids)
+            self.hass.async_add_executor_job(self._timed_get_statuses, cloud_ids)
             if cloud_ids
             else None
         )
@@ -237,7 +242,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                     try:
                         fresh.update(
                             await self.hass.async_add_executor_job(
-                                self.client.get_statuses, missing
+                                self._timed_get_statuses, missing
                             )
                         )
                     except TrustAuthError as err:
@@ -271,6 +276,14 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             and not self._follows_local(i)
         }
         return {k: list(v) for k, v in self._statuses.items()}
+
+    def _timed_get_statuses(self, entity_ids: list[int]) -> dict[int, list[int]]:
+        """The cloud status request, timed (runs in the executor)."""
+        start = time.monotonic()
+        try:
+            return self.client.get_statuses(entity_ids)
+        finally:
+            self.cloud_poll_ms.append((time.monotonic() - start) * 1000)
 
     def _follows_local(self, entity_id: int) -> bool:
         """A group whose members are all read on the LAN stays up to date."""

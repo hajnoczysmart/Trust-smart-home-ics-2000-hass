@@ -6,6 +6,7 @@ MAC, the home ID and the hub address are removed.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from typing import Any
 
@@ -15,6 +16,20 @@ from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_ALARM_CODE, CONF_HOME, DOMAIN
+
+SECURITY_TYPES = {16, 17, 18, 19, 20, 240}  # 868 MHz security devices, alarm module
+
+
+def _summary(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {"count": 0}
+    ordered = sorted(values)
+    return {
+        "count": len(values),
+        "last": round(values[-1]),
+        "median": round(ordered[len(ordered) // 2]),
+        "max": round(ordered[-1]),
+    }
 
 TO_REDACT = {CONF_EMAIL, CONF_PASSWORD, CONF_IP_ADDRESS, CONF_HOME, "aes_key", "mac"}
 
@@ -85,6 +100,44 @@ async def async_get_config_entry_diagnostics(
             "runs": runs,
         }
     result["last_update_success"] = coordinator.last_update_success
+    # where the status delay comes from: the cloud request time and the real
+    # time between polls (the poll waits for the previous one to finish)
+    cloud_ms = list(coordinator.cloud_poll_ms)
+    starts = list(coordinator.poll_starts)
+    gaps = [(b - a) * 1000 for a, b in zip(starts, starts[1:])]
+    result["poll_timing"] = {
+        "scan_interval_s": coordinator.update_interval.total_seconds()
+        if coordinator.update_interval
+        else None,
+        "cloud_request_ms": _summary(cloud_ms),
+        "time_between_polls_ms": _summary(gaps),
+    }
+    if host:
+        # Does the hub answer the security devices' statuses on the LAN, and
+        # do they match the cloud? (Reading them there would be much faster.)
+        security = [
+            d
+            for d in sorted(coordinator.devices.values(), key=lambda d: d.id)
+            if d.kind == "module" and d.device_type in SECURITY_TYPES
+        ]
+
+        def _read_security() -> list[dict[str, Any]]:
+            out = []
+            for dev in security:
+                start = time.monotonic()
+                lan = coordinator.client.get_status_local(dev.id, host)
+                out.append(
+                    {
+                        "id": dev.id,
+                        "type_name": dev.type_name,
+                        "cloud": (coordinator.data or {}).get(dev.id),
+                        "lan": lan,
+                        "lan_ms": round((time.monotonic() - start) * 1000),
+                    }
+                )
+            return out
+
+        result["security_lan_probe"] = await hass.async_add_executor_job(_read_security)
     statuses = coordinator.data or {}
     devices = []
     for dev in sorted(coordinator.devices.values(), key=lambda d: d.id):
