@@ -51,15 +51,27 @@ async def async_setup_entry(
 SIREN_PANIC_INDEX = 1
 SIREN_PANIC = 21  # SecurityDevice.VALUE_PANIC
 
-async def async_panic(coordinator: TrustCoordinator) -> None:
-    """Panic: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
+SIREN_PANIC_OFF = 0  # the value sent when panic is switched off (not verified on a siren yet)
+
+
+def find_siren(coordinator: TrustCoordinator):
     siren = next(
         (d for d in coordinator.devices.values() if d.device_type in ARC_SIREN),
         None,
     )
     if siren is None:
         raise HomeAssistantError("No security siren is paired with the hub")
-    await coordinator.async_send(siren, SIREN_PANIC_INDEX, SIREN_PANIC, optimistic=False)
+    return siren
+
+
+async def async_panic(coordinator: TrustCoordinator, on: bool = True) -> None:
+    """Panic on/off: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
+    await coordinator.async_send(
+        find_siren(coordinator),
+        SIREN_PANIC_INDEX,
+        SIREN_PANIC if on else SIREN_PANIC_OFF,
+        optimistic=False,
+    )
 
 
 WALKOUT_STATES = ("pre_walkout", "walkout")

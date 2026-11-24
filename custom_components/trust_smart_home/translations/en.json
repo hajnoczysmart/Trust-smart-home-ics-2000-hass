@@ -205,6 +205,9 @@
       }
     },
     "switch": {
+      "panic_mode": {
+        "name": "Panic mode"
+      },
       "hub_led": {
         "name": "Hub LED"
       },

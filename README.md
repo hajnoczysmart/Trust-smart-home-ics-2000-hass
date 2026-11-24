@@ -46,7 +46,7 @@ cleanest way is to delete the old integration entry and add it again.
 | Security system remote, 868 MHz | `event` (arm / disarm), low battery |
 | Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button, *Sound alarm* and *Panic alarm* buttons (both disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
-| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button on the same device; attributes `walkout_remaining` (estimated countdown while arming) and `cloud_stale` |
+| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button and *Panic mode* switch on the same device; attributes `walkout_remaining` (estimated countdown while arming) and `cloud_stale` |
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
@@ -81,8 +81,9 @@ confirmation:
 - **Panic alarm (868 MHz siren):** the alarm panel's *Trigger* button (Home Assistant's alarm card shows it)
   sets the siren to panic, the same command as the app's panic button. The *Panic* button on the alarm
   device does the same and is enabled by default; the *Panic alarm* button on the siren is disabled by default.
-  The Home Assistant arm/disarm dialog shows only the arm modes, so use the *Panic* button on the device page
-  or a dashboard button (see below). It is disabled by default, so an accidental press cannot sound the siren.
+  The *Panic mode* switch turns panic on (value 21) and off (value 0, not verified on a real siren yet).
+  The Home Assistant arm/disarm dialog shows only the arm modes, so use the *Panic* button or switch on the
+  device page, or a dashboard button (see below). It is disabled by default, so an accidental press cannot sound the siren.
   Home Assistant has no command to stop it; whether disarming the alarm stops it is not verified.
   This has not been tested on a real siren yet; please report what happens.
 - **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a

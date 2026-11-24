@@ -8,11 +8,13 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice
+from .alarm_control_panel import SIREN_PANIC, SIREN_PANIC_INDEX, async_panic, find_siren
+from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice, status_value
 from .const import DOMAIN
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
@@ -28,6 +30,11 @@ async def async_setup_entry(
         TrustSwitch(coordinator, dev)
         for dev in coordinator.devices.values()
         if dev.description.switch is not None
+    ]
+    entities += [
+        TrustPanicSwitch(coordinator, dev)
+        for dev in coordinator.devices.values()
+        if dev.description.alarm
     ]
     entities += [
         TrustRuleSwitch(coordinator, dev)
@@ -76,6 +83,30 @@ class TrustHubLed(SwitchEntity, RestoreEntity):
         await self.coordinator.async_set_led("off")
         self._attr_is_on = False
         self.async_write_ha_state()
+
+
+class TrustPanicSwitch(TrustEntity, SwitchEntity):
+    """Panic mode, as the app's Panic ON/OFF switch. The state is the siren's."""
+
+    _attr_translation_key = "panic_mode"
+    _attr_icon = "mdi:alarm-light"
+
+    def __init__(self, coordinator: TrustCoordinator, device: TrustDevice) -> None:
+        super().__init__(coordinator, device, "panic_mode")
+
+    @property
+    def is_on(self) -> bool | None:
+        try:
+            siren = find_siren(self.coordinator)
+        except HomeAssistantError:
+            return None
+        return status_value(self.coordinator.status(siren.id), SIREN_PANIC_INDEX) == SIREN_PANIC
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await async_panic(self.coordinator, on=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await async_panic(self.coordinator, on=False)
 
 
 class TrustSwitch(TrustEntity, SwitchEntity):
