@@ -98,6 +98,12 @@ class TrustPanicSwitch(TrustEntity, SwitchEntity):
         self._on = False
 
     @property
+    def available(self) -> bool:
+        # Panic controls do not depend on the device's cloud status: a slow cloud
+        # poll after a panic must not grey them out.
+        return self.coordinator.last_update_success
+
+    @property
     def is_on(self) -> bool:
         return self._on
 

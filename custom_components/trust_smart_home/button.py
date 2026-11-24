@@ -67,6 +67,12 @@ class TrustPanicButton(TrustEntity, ButtonEntity):
     def __init__(self, coordinator: TrustCoordinator, device: TrustDevice) -> None:
         super().__init__(coordinator, device, "panic")
 
+    @property
+    def available(self) -> bool:
+        # Panic controls do not depend on the device's cloud status: a slow cloud
+        # poll after a panic must not grey them out.
+        return self.coordinator.last_update_success
+
     async def async_press(self) -> None:
         await async_panic(self.coordinator)
 
