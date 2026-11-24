@@ -1,6 +1,7 @@
 """The ICS-2000 security system (alarm module, device type 240)."""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from homeassistant.components.alarm_control_panel import (
@@ -51,7 +52,8 @@ async def async_setup_entry(
 SIREN_PANIC_INDEX = 1
 SIREN_PANIC = 21  # SecurityDevice.VALUE_PANIC
 
-SIREN_PANIC_OFF = 0  # the value sent when panic is switched off (not verified on a siren yet)
+CALM_REPEATS = 5  # the app's "calm" (panic off) sends disarm this many times
+CALM_INTERVAL = 1.0  # seconds between the repeats
 
 
 def find_siren(coordinator: TrustCoordinator):
@@ -64,14 +66,24 @@ def find_siren(coordinator: TrustCoordinator):
     return siren
 
 
-async def async_panic(coordinator: TrustCoordinator, on: bool = True) -> None:
-    """Panic on/off: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
+async def async_panic(coordinator: TrustCoordinator) -> None:
+    """Panic: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
     await coordinator.async_send(
-        find_siren(coordinator),
-        SIREN_PANIC_INDEX,
-        SIREN_PANIC if on else SIREN_PANIC_OFF,
-        optimistic=False,
+        find_siren(coordinator), SIREN_PANIC_INDEX, SIREN_PANIC, optimistic=False
     )
+
+
+async def async_calm(coordinator: TrustCoordinator) -> None:
+    """Panic off, as the app's calm button: disarm the alarm module, repeated.
+
+    The app sends disarm (function 15, value 39) to the security module five
+    times in a row; the hub's status does not show panic going back to 0.
+    """
+    alarm = next(d for d in coordinator.devices.values() if d.description.alarm)
+    for attempt in range(CALM_REPEATS):
+        if attempt:
+            await asyncio.sleep(CALM_INTERVAL)
+        await coordinator.async_send(alarm, ALARM_COMMAND_INDEX, ALARM_DISARM, optimistic=False)
 
 
 WALKOUT_STATES = ("pre_walkout", "walkout")

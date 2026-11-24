@@ -8,13 +8,12 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .alarm_control_panel import SIREN_PANIC, SIREN_PANIC_INDEX, async_panic, find_siren
-from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice, status_value
+from .alarm_control_panel import async_calm, async_panic
+from .catalog import RULE_DISABLED, RULE_ENABLED, RULE_INDEX, TrustDevice
 from .const import DOMAIN
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
@@ -86,27 +85,31 @@ class TrustHubLed(SwitchEntity, RestoreEntity):
 
 
 class TrustPanicSwitch(TrustEntity, SwitchEntity):
-    """Panic mode, as the app's Panic ON/OFF switch. The state is the siren's."""
+    """Panic mode, like the app's Panic ON/OFF. ON sounds the siren's panic; OFF
+    sends the app's calm (repeated disarm). The hub's status does not show panic
+    going back off, so the state here is the last command sent."""
 
     _attr_translation_key = "panic_mode"
     _attr_icon = "mdi:alarm-light"
+    _attr_assumed_state = True
 
     def __init__(self, coordinator: TrustCoordinator, device: TrustDevice) -> None:
         super().__init__(coordinator, device, "panic_mode")
+        self._on = False
 
     @property
-    def is_on(self) -> bool | None:
-        try:
-            siren = find_siren(self.coordinator)
-        except HomeAssistantError:
-            return None
-        return status_value(self.coordinator.status(siren.id), SIREN_PANIC_INDEX) == SIREN_PANIC
+    def is_on(self) -> bool:
+        return self._on
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await async_panic(self.coordinator, on=True)
+        await async_panic(self.coordinator)
+        self._on = True
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await async_panic(self.coordinator, on=False)
+        await async_calm(self.coordinator)
+        self._on = False
+        self.async_write_ha_state()
 
 
 class TrustSwitch(TrustEntity, SwitchEntity):

@@ -81,7 +81,7 @@ confirmation:
 - **Panic alarm (868 MHz siren):** the alarm panel's *Trigger* button (Home Assistant's alarm card shows it)
   sets the siren to panic, the same command as the app's panic button. The *Panic* button on the alarm
   device does the same and is enabled by default; the *Panic alarm* button on the siren is disabled by default.
-  The *Panic mode* switch turns panic on (value 21) and off (value 0, not verified on a real siren yet).
+  The *Panic mode* switch turns panic on (siren value 21). Off sends the app's calm: disarm to the alarm module, five times. The switch shows the last command, because the hub's status does not show panic going back off.
   The Home Assistant arm/disarm dialog shows only the arm modes, so use the *Panic* button or switch on the
   device page, or a dashboard button (see below). It is disabled by default, so an accidental press cannot sound the siren.
   Home Assistant has no command to stop it; whether disarming the alarm stops it is not verified.
