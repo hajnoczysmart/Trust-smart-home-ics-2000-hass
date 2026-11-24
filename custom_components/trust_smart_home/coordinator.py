@@ -66,6 +66,9 @@ SECURITY_QUIET_AFTER_COMMAND = 2.0
 # A busy hub (e.g. arming the sensors by radio at the end of the walkout) is
 # asked again next second instead of retried for long: it is not "unreachable"
 SECURITY_BUSY_RETRIES = 4
+# With the LAN option on, this many lights/switches/Zigbee sensors are read per
+# round after the security system, in turn (16 lights: each every 4 s)
+LIGHTS_PER_ROUND = 4
 # seconds a device keeps its last value while the cloud fails (then unavailable);
 # the cloud often fails or takes 15-38 s between answers (measured), so 30 s made
 # cloud-only devices flicker to unavailable every few minutes
@@ -140,7 +143,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._security_running = False
         self._commands_in_flight = 0
         self._security_quiet_until = 0.0
-        self.security_busy_rounds = 0  # rounds in which the hub only said busy
+        self.security_busy_rounds = 0
+        self._light_next = 0  # rounds in which the hub only said busy
         self.security_lan_ms: deque[float] = deque(maxlen=60)
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
@@ -198,20 +202,24 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         return [d.id for d in self.devices.values() if d.kind in ("module", "group", "scenario")]
 
     def _local_candidates(self) -> list[int]:
-        """Devices to read from the hub this round, in round-robin order."""
-        if not self.local_address or not self.config_entry.options.get(CONF_LOCAL_STATUS, False):
+        """Devices to read from the hub in the cloud poll: none any more.
+
+        With the option on, lights, switches and Zigbee sensors are read in
+        the LAN loop (async_security_tick), which does not wait for the cloud."""
+        return []
+
+    def _lights_on_lan(self) -> list[int]:
+        """Lights, switches and Zigbee sensors to read on the LAN (option on)."""
+        if not self.config_entry.options.get(CONF_LOCAL_STATUS, False):
             return []
-        if time.monotonic() < self._local_retry_at:
-            return []
-        ids = [
+        return [
             d.id
             for d in sorted(self.devices.values(), key=lambda d: d.id)
-            if d.id not in self.local_excluded and reads_locally(d)
+            if reads_locally(d)
+            and d.device_type not in SECURITY_TYPES
+            and d.id not in self.security_lan_bad
+            and (d.id in self.security_lan or d.id in self._reported)
         ]
-        if not ids:
-            return []
-        start = self._local_next % len(ids)
-        return ids[start:] + ids[:start]
 
     async def _async_update_data(self) -> dict[int, list[int]]:
         """Statuses from the cloud, and (when the experimental option is on)
@@ -345,6 +353,13 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # checked against the cloud first, so wait for its first value
             and (d.id in self.security_lan or d.id in self._reported)
         ]
+        # then a few lights/switches/sensors per round, in turn (option on)
+        lights = self._lights_on_lan()
+        if lights:
+            start = self._light_next % len(lights)
+            batch = (lights[start:] + lights[:start])[:LIGHTS_PER_ROUND]
+            self._light_next = start + len(batch)
+            ids += batch
         if not ids:
             return
         self._security_running = True
@@ -375,11 +390,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             if entity_id not in self.security_lan:
                 if plausible_local_status(status, self._reported.get(entity_id)):
                     self.security_lan.add(entity_id)
-                    _LOGGER.debug("Security device %s is read on the LAN", entity_id)
+                    _LOGGER.debug("Device %s is read on the LAN", entity_id)
                 else:
                     self.security_lan_bad.add(entity_id)
                     _LOGGER.debug(
-                        "Security device %s: LAN %s differs from cloud %s; cloud only",
+                        "Device %s: LAN %s differs from cloud %s; cloud only",
                         entity_id, status, self._reported.get(entity_id),
                     )
                     continue
@@ -427,8 +442,9 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
     def _follows_local(self, entity_id: int) -> bool:
         """A group whose members are all read on the LAN stays up to date."""
         dev = self.devices.get(entity_id)
+        on_lan = self.security_on_lan()
         return bool(dev and dev.kind == "group" and dev.members) and all(
-            m in self.local_ok for m in dev.members
+            m in self.local_ok or m in on_lan for m in dev.members
         )
 
     def _use_local(

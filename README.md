@@ -199,30 +199,29 @@ diagnostics file shows which devices are read on the LAN (`security_lan`).
 > device types may behave differently. Turn it off if devices show wrong states or stop
 > responding, and please report what you see.
 
-Configure → *Settings* → *Read states from the hub on the LAN* (off by default). The app
-itself always reads states from the Trust cloud; with this option the integration asks the
-hub directly for part of the devices:
+Configure → *Settings* → *Read lights, switches and Zigbee sensors from the hub on the LAN*
+(off by default). The app itself always reads states from the Trust cloud; with this option
+these devices join the LAN loop of the security system (see above):
 
-- **Read from the hub:** lights, switches/plugs and Zigbee sensors. Their states are fresher
-  (the cloud often reports an old value for a while after a command), and they keep working
-  when the Trust cloud is unavailable.
-- **Always from the cloud:** covers (Somfy and other motors), the P1 energy module,
-  rules and groups. The hub does not keep their states (it answers with zeros, or not at all).
+- **Read from the hub:** lights, switches/plugs and Zigbee sensors. After the security
+  system, 4 of them are read each second, in turn (with 16 lights each one about every 4 s),
+  without waiting for the cloud, which took 6-28 s per request on a real hub. Their states
+  are fresher (the cloud often reports an old value for a while after a command), and they
+  keep working when the Trust cloud is unavailable. Groups follow their members.
+- **Always from the cloud:** covers (Somfy and other motors), the P1 energy module and
+  rules. The hub does not keep their states (it answers with zeros, or not at all).
 - **Checked first:** a device is only read from the hub after its first answer matches the
-  cloud's (for example not all zeros where the cloud has a value). Devices that fail the check,
-  or stop answering, stay on the cloud.
-- **When the cloud is down:** devices read from the hub stay up to date. If the hub does not
-  answer for a poll or two, they keep their last value; after `LOCAL_MISSES` (3) such polls
-  they are shown as unavailable. The others are unavailable as soon as the cloud fails, rather
-  than showing an old state.
+  cloud's (for example not all zeros where the cloud has a value). Devices that fail the check
+  stay on the cloud.
+- **Busy or unreachable hub:** a busy hub is asked again the next second; when it does not
+  answer at all three rounds in a row, the cloud takes over for a minute. Devices that are not
+  refreshed keep their last value for 5 minutes before they are shown as unavailable.
 
 Each device takes about 0.1 s (the hub answers one request at a time; the integration
-acknowledges each answer like the app, otherwise the hub would pause for a second). Up to
-2 seconds per poll are used, which covers about 20 devices; with more, they take turns. The
-cloud is asked at the same time, so a poll does not take longer. Commands always have
-priority: a command waits at most for the one request in progress.
+acknowledges each answer like the app, otherwise the hub would pause for a second).
+Commands always have priority: the loop pauses while a command is sent and for 2 s after it.
 
-The diagnostics file shows which devices are read from the hub (`local_status_devices`),
+The diagnostics file shows which devices are read from the hub (`security_lan`),
 the hub's raw answers and their timing (`local_status_probe`), and an acknowledgement test
 (`local_status_ack_test`, a few seconds). These are included also when the option is off.
 

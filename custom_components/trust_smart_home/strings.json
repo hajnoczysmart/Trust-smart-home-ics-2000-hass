@@ -66,10 +66,10 @@
       },
       "settings": {
         "title": "Settings",
-        "description": "How often device states are read (default: 3 seconds).\n\nReading states from the hub on the LAN is experimental and has not been tested with every device type. When it is on, lights, switches and Zigbee sensors are read from the hub, everything else still from the cloud, and each device's first answer is checked against the cloud. Turn it off if devices show wrong states or stop responding.",
+        "description": "How often device states are read from the cloud (default: 3 seconds). The cloud often takes several seconds to answer.\n\nThe alarm and the security and safety sensors are always read from the hub on the LAN every second (when the hub's address is known).\n\nReading lights, switches and Zigbee sensors from the hub on the LAN as well is experimental and has not been tested with every device type. When it is on, a few of them are read from the hub every second, in turn (each about every 4 s with 16 lights), without waiting for the cloud; each device's first answer is checked against the cloud. Turn it off if devices show wrong states or stop responding.",
         "data": {
           "scan_interval": "Status polling interval (seconds)",
-          "local_status": "Read states from the hub on the LAN (experimental, not tested with every device)"
+          "local_status": "Read lights, switches and Zigbee sensors from the hub on the LAN (experimental)"
         }
       },
       "power_pick": {
