@@ -193,11 +193,10 @@ class TrustOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(
-                title="", data={**self.config_entry.options, **user_input}
-            )
+            options = {**self.config_entry.options, **user_input}
+            options.pop(CONF_LOCAL_STATUS, None)  # the former experimental option
+            return self.async_create_entry(title="", data=options)
         current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-        local = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
@@ -205,7 +204,6 @@ class TrustOptionsFlow(OptionsFlow):
                     vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
                         vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
                     ),
-                    vol.Required(CONF_LOCAL_STATUS, default=local): bool,
                 }
             ),
         )

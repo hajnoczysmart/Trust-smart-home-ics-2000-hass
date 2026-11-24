@@ -34,7 +34,6 @@ from .catalog import (
     status_value,
 )
 from .const import (
-    CONF_LOCAL_STATUS,
     CONF_MAPPINGS,
     CONF_POWER,
     CONF_SCAN_INTERVAL,
@@ -223,9 +222,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         return []
 
     def _lights_on_lan(self) -> list[int]:
-        """Lights, switches and Zigbee sensors to read on the LAN (option on)."""
-        if not self.config_entry.options.get(CONF_LOCAL_STATUS, False):
-            return []
+        """Lights, switches and Zigbee sensors to read on the LAN (always, when
+        the hub's address is known; each checked against the cloud first)."""
         return [
             d.id
             for d in sorted(self.devices.values(), key=lambda d: d.id)

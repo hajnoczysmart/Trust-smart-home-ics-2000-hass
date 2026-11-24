@@ -185,23 +185,21 @@ motion and smoke sensors, siren, remote) and the Zigbee safety sensors (smoke, C
 FireAngel) are read from the hub every second, in a loop of
 their own that does not wait for the cloud. Measured on a real hub: the cloud took 6 s
 (median, up to 19 s) per status request, the hub answered each security device in about
-90 ms with the same values. This is independent of the option below. Each device's first
+90 ms with the same values. Lights and other devices are read in the same loop (below). Each device's first
 answer must match the cloud's; a device that does not match stays on the cloud. When the
 hub does not answer at all three rounds in a row, the cloud takes over for a minute; a hub
 that answers *busy* (for example while it arms the sensors by radio at the end of the walkout)
 is simply asked again the next second. The alarm module is read first in each round. Commands go first: the loop pauses while a command is sent and for 2 s after it, and a command waits up to about 3 s for a busy hub before it goes through the cloud. The
 diagnostics file shows which devices are read on the LAN (`security_lan`).
 
-## Statuses from the hub (experimental)
+## Lights and other devices on the LAN
 
-> **Experimental, and not tested with every device type.** It has been measured on one hub
-> with 433 MHz switches, a Zigbee dimmer, Zigbee lights and Zigbee smoke/CO sensors. Other
-> device types may behave differently. Turn it off if devices show wrong states or stop
-> responding, and please report what you see.
-
-Configure → *Settings* → *Read lights, switches and Zigbee sensors from the hub on the LAN*
-(off by default). The app itself always reads states from the Trust cloud; with this option
-these devices join the LAN loop of the security system (see above):
+The app itself always reads states from the Trust cloud. When the hub's address is known,
+the integration also reads lights, switches and Zigbee sensors from the hub, in the LAN loop
+of the security system (see above); there is no option for it any more (it was an
+experimental setting before 1.18). Measured on one hub with 433 MHz switches, Zigbee
+dimmers, Zigbee RGB lights and Zigbee smoke/CO sensors; other device types are checked
+against the cloud first and stay on the cloud when their answer does not match:
 
 - **Read from the hub:** lights, switches/plugs and Zigbee sensors. Each second the alarm
   module and the sensors that trigger it are read, then 3 of the rest (siren, remote, lights)
@@ -231,7 +229,7 @@ Commands always have priority: the loop pauses while a command is sent and for 2
 
 The diagnostics file shows which devices are read from the hub (`security_lan`),
 the hub's raw answers and their timing (`local_status_probe`), and an acknowledgement test
-(`local_status_ack_test`, a few seconds). These are included also when the option is off.
+(`local_status_ack_test`, a few seconds).
 
 ## Light colours
 
