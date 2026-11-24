@@ -180,23 +180,24 @@ class TrustOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        return self.async_show_menu(
-            step_id="init", menu_options=["settings", "pick_device", "power_pick"]
-        )
+        options = ["settings"]
+        coordinator = self._coordinator()
+        if coordinator is None or any(
+            d.description.alarm for d in coordinator.devices.values()
+        ):
+            options.append("alarm")
+        options += ["pick_device", "power_pick"]
+        return self.async_show_menu(step_id="init", menu_options=options)
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
-            # an emptied field means no code (an omitted key would keep the old one)
-            code = str(user_input.get(CONF_ALARM_CODE, "") or "").strip()
             return self.async_create_entry(
-                title="",
-                data={**self.config_entry.options, **user_input, CONF_ALARM_CODE: code},
+                title="", data={**self.config_entry.options, **user_input}
             )
         current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         local = bool(self.config_entry.options.get(CONF_LOCAL_STATUS, False))
-        code = str(self.config_entry.options.get(CONF_ALARM_CODE, "") or "")
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema(
@@ -205,6 +206,25 @@ class TrustOptionsFlow(OptionsFlow):
                         vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
                     ),
                     vol.Required(CONF_LOCAL_STATUS, default=local): bool,
+                }
+            ),
+        )
+
+    async def async_step_alarm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Alarm settings: the code needed to arm and disarm."""
+        if user_input is not None:
+            # an emptied field means no code (an omitted key would keep the old one)
+            code = str(user_input.get(CONF_ALARM_CODE, "") or "").strip()
+            return self.async_create_entry(
+                title="", data={**self.config_entry.options, CONF_ALARM_CODE: code}
+            )
+        code = str(self.config_entry.options.get(CONF_ALARM_CODE, "") or "")
+        return self.async_show_form(
+            step_id="alarm",
+            data_schema=vol.Schema(
+                {
                     vol.Optional(
                         CONF_ALARM_CODE,
                         description={"suggested_value": code},

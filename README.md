@@ -46,7 +46,7 @@ cleanest way is to delete the old integration entry and add it again.
 | Security system remote, 868 MHz | `event` (arm / disarm), low battery |
 | Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button, *Sound alarm* and *Panic alarm* buttons (both disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
-| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button and *Panic mode* switch on the same device; attributes `walkout_remaining` (estimated countdown while arming) and `cloud_stale`; optional alarm code for arming and disarming (*Settings* in the options, empty = no code; trigger/panic never asks for it) |
+| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered), trigger = panic; *Panic* button and *Panic mode* switch on the same device; attributes `walkout_remaining` (estimated countdown while arming) and `cloud_stale`; optional alarm code for arming and disarming (*Alarm settings* in the options menu, empty = no code; trigger/panic never asks for it; leave the entity's own *Default code* empty, or Home Assistant never asks) |
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |

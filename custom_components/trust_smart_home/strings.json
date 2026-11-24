@@ -59,6 +59,7 @@
         "title": "Trust Smart Home",
         "menu_options": {
           "settings": "Settings",
+          "alarm": "Alarm settings",
           "pick_device": "Extra sensor for a device",
           "power_pick": "Estimated power of lights and plugs"
         }
@@ -68,8 +69,7 @@
         "description": "How often device states are read (default: 3 seconds).\n\nReading states from the hub on the LAN is experimental and has not been tested with every device type. When it is on, lights, switches and Zigbee sensors are read from the hub, everything else still from the cloud, and each device's first answer is checked against the cloud. Turn it off if devices show wrong states or stop responding.",
         "data": {
           "scan_interval": "Status polling interval (seconds)",
-          "local_status": "Read states from the hub on the LAN (experimental, not tested with every device)",
-          "alarm_code": "Alarm code (needed to arm and disarm; empty = no code)"
+          "local_status": "Read states from the hub on the LAN (experimental, not tested with every device)"
         }
       },
       "power_pick": {
@@ -85,6 +85,13 @@
         "data": {
           "watts": "Power (W)",
           "scale": "Scale with brightness (dimmable lights)"
+        }
+      },
+      "alarm": {
+        "title": "Alarm settings",
+        "description": "Code needed to arm and disarm the alarm from Home Assistant. Leave empty for no code. Trigger (panic) never asks for the code.\n\nDo not also fill in the entity's own *Default code*: Home Assistant then enters it for you and never asks.",
+        "data": {
+          "alarm_code": "Alarm code"
         }
       }
     },
