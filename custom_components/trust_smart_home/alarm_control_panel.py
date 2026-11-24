@@ -51,6 +51,17 @@ async def async_setup_entry(
 SIREN_PANIC_INDEX = 1
 SIREN_PANIC = 21  # SecurityDevice.VALUE_PANIC
 
+async def async_panic(coordinator: TrustCoordinator) -> None:
+    """Panic: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
+    siren = next(
+        (d for d in coordinator.devices.values() if d.device_type in ARC_SIREN),
+        None,
+    )
+    if siren is None:
+        raise HomeAssistantError("No security siren is paired with the hub")
+    await coordinator.async_send(siren, SIREN_PANIC_INDEX, SIREN_PANIC, optimistic=False)
+
+
 WALKOUT_STATES = ("pre_walkout", "walkout")
 
 
@@ -135,11 +146,4 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
         await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
 
     async def async_alarm_trigger(self, code: str | None = None) -> None:
-        """Panic: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
-        siren = next(
-            (d for d in self.coordinator.devices.values() if d.device_type in ARC_SIREN),
-            None,
-        )
-        if siren is None:
-            raise HomeAssistantError("No security siren is paired with the hub")
-        await self.coordinator.async_send(siren, SIREN_PANIC_INDEX, SIREN_PANIC, optimistic=False)
+        await async_panic(self.coordinator)

@@ -8,6 +8,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .alarm_control_panel import async_panic
 from .catalog import ButtonSpec, TrustDevice
 from .const import DOMAIN
 from .coordinator import TrustCoordinator
@@ -24,6 +25,11 @@ async def async_setup_entry(
         for dev in coordinator.devices.values()
         for spec in dev.description.buttons
     ]
+    entities.extend(
+        TrustPanicButton(coordinator, dev)
+        for dev in coordinator.devices.values()
+        if dev.description.alarm
+    )
     entities.append(TrustHubRestart(coordinator))
     async_add_entities(entities)
 
@@ -50,6 +56,19 @@ class TrustButton(TrustEntity, ButtonEntity):
     async def async_press(self) -> None:
         # A press triggers something; it does not set a lasting state.
         await self.send(self.spec.index, self.spec.value, optimistic=False)
+
+
+class TrustPanicButton(TrustEntity, ButtonEntity):
+    """Panic on the alarm device, next to the arm and disarm controls."""
+
+    _attr_translation_key = "panic"
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator: TrustCoordinator, device: TrustDevice) -> None:
+        super().__init__(coordinator, device, "panic")
+
+    async def async_press(self) -> None:
+        await async_panic(self.coordinator)
 
 
 class TrustHubRestart(TrustHubEntity, ButtonEntity):

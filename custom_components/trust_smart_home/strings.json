@@ -132,6 +132,9 @@
       "siren_panic": {
         "name": "Panic alarm"
       },
+      "panic": {
+        "name": "Panic"
+      },
       "rule_run": {
         "name": "Run {name}"
       },
