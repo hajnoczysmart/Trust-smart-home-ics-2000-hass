@@ -211,7 +211,9 @@ these devices join the LAN loop of the security system (see above):
   are fresher (the cloud often reports an old value for a while after a command), and they
   keep working when the Trust cloud is unavailable. Groups follow their members. A value read on
   the hub also corrects what Home Assistant shows (for example the colour mode), except
-  for 5 s after a command of ours, while the hub may still report the old value.
+  for 5 s after a command of ours, while the hub may still report the old value. Values the
+  cloud reports for these devices are ignored (it often reports old ones). The diagnostics
+  file lists the latest changes of shown values and where they came from (`recent_changes`).
 - **Always from the cloud:** covers (Somfy and other motors), the P1 energy module and
   rules. The hub does not keep their states (it answers with zeros, or not at all).
 - **Checked first:** a device is only read from the hub after its first answer matches the

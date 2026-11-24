@@ -111,6 +111,11 @@ async def async_get_config_entry_diagnostics(
         "cloud_request_ms": _summary(cloud_ms),
         "time_between_polls_ms": _summary(gaps),
     }
+    names = {d.id: d.name for d in coordinator.devices.values()}
+    result["recent_changes"] = [
+        {"time": t, "device": names.get(eid, eid), "id": eid, "index": i, "old": o, "new": n, "source": src}
+        for t, eid, i, o, n, src in list(coordinator.change_log)[-150:]
+    ]
     result["security_lan"] = {
         "read_on_lan": sorted(coordinator.security_lan),
         "cloud_only": sorted(coordinator.security_lan_bad),

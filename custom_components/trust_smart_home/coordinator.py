@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     SETTING_FW_UPDATE_DISABLED,
@@ -139,6 +140,9 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self.stale_ids: set[int] = set()
         # when each device last got a fresh value (cloud or hub), monotonic seconds
         self._last_seen: dict[int, float] = {}
+        # recent changes of shown values with their source, for the diagnostics
+        # file: (time, entity id, index, old, new, lan/cloud/integration)
+        self.change_log: deque[tuple[str, int, int, int | None, int, str]] = deque(maxlen=300)
         # timing, for the diagnostics file: how long the cloud status requests
         # take (ms) and when the polls started (monotonic seconds)
         self.cloud_poll_ms: deque[float] = deque(maxlen=60)
@@ -299,6 +303,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                     except TrustApiError as err:
                         cloud_error = err
 
+        # Devices read on the LAN ignore the cloud, also an answer to a request
+        # sent before they moved to the LAN: the cloud often reports old values
+        # (e.g. an old colour mode), which made lights flip between two states
+        on_lan = self.security_on_lan()
+        fresh = {k: v for k, v in fresh.items() if k not in on_lan}
         now = time.monotonic()
         for entity_id in fresh:
             self._last_seen[entity_id] = now
@@ -522,6 +531,11 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self.local_ok.discard(entity_id)
             _LOGGER.debug("Device %s stopped answering on the LAN; checking it again later", entity_id)
 
+    def _log_change(self, eid: int, index: int, old: int | None, new: int, source: str) -> None:
+        self.change_log.append(
+            (dt_util.utcnow().isoformat(timespec="seconds"), eid, index, old, new, source)
+        )
+
     def _merge(self, fresh: dict[int, list[int]], authoritative: bool = False) -> None:
         """Apply what the cloud reports, but only the values that changed.
 
@@ -549,6 +563,10 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                             continue
                         if i >= len(shown):
                             shown.extend([0] * (i + 1 - len(shown)))
+                        if shown[i] != value:
+                            self._log_change(
+                                eid, i, shown[i], value, "lan" if authoritative else "cloud"
+                            )
                         shown[i] = value
                         changed.add((eid, i))
                 self._statuses[eid] = shown
@@ -583,12 +601,12 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                 continue
             if index == on_index:
                 states = [status_value(self._statuses.get(m), on_index) for m in dev.members]
-                self._write(dev.id, index, 1 if any(s == 1 for s in states) else 0)
+                self._write(dev.id, index, 1 if any(s == 1 for s in states) else 0, "group")
             elif len(movers) == 1 or not _is_dim_index(dev, index):
                 # one member changed: the group takes its value (colour: the last one)
                 value = status_value(self._statuses.get(movers[-1]), index)
                 if value is not None:
-                    self._write(dev.id, index, value)
+                    self._write(dev.id, index, value, "group")
             else:
                 # several members changed at once: same rule as at start-up
                 # (average of the lit members), so the result does not depend on
@@ -599,7 +617,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                     dev.description,
                 )
                 if derived is not None and status_value(derived, index) is not None:
-                    self._write(dev.id, index, derived[index])
+                    self._write(dev.id, index, derived[index], "group")
 
     def _is_late_echo(self, eid: int, index: int, value: int) -> bool:
         """True if `value` is an older command of ours that the cloud reports late."""
@@ -625,7 +643,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         e.g. the colour pointer after a colour command), for a group also its members."""
         targets = [device.id, *device.members] if device.kind == "group" else [device.id]
         for eid in targets:
-            self._write(eid, index, int(value))
+            self._write(eid, index, int(value), "set_local")
             self._remember_sent(eid, index, int(value))
         self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
 
@@ -635,10 +653,12 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             if owner is not keep and ids & entity_ids:
                 await owner.async_stop_animation()
 
-    def _write(self, eid: int, index: int, value: int) -> None:
+    def _write(self, eid: int, index: int, value: int, source: str = "integration") -> None:
         status = list(self._statuses.get(eid, []))
         if len(status) <= index:
             status.extend([0] * (index + 1 - len(status)))
+        if status[index] != value:
+            self._log_change(eid, index, status[index], value, source)
         status[index] = value
         self._statuses[eid] = status
 
@@ -670,7 +690,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # A group command also sets its members (update_group_members=true).
             targets = [device.id, *device.members] if device.kind == "group" else [device.id]
             for eid in targets:
-                self._write(eid, index, int(value))
+                self._write(eid, index, int(value), "command")
                 self._remember_sent(eid, index, int(value))
             self.async_set_updated_data({k: list(v) for k, v in self._statuses.items()})
         self._schedule_refresh()
