@@ -10,12 +10,14 @@ from homeassistant.components.alarm_control_panel import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .catalog import (
     ALARM_ARM,
+    ARC_SIREN,
     ALARM_COMMAND_INDEX,
     ALARM_DISARM,
     ALARM_STATE_INDEX,
@@ -46,6 +48,9 @@ async def async_setup_entry(
     )
 
 
+SIREN_PANIC_INDEX = 1
+SIREN_PANIC = 21  # SecurityDevice.VALUE_PANIC
+
 WALKOUT_STATES = ("pre_walkout", "walkout")
 
 
@@ -59,7 +64,10 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     """
 
     _attr_code_arm_required = False
-    _attr_supported_features = AlarmControlPanelEntityFeature.ARM_AWAY
+    _attr_supported_features = (
+        AlarmControlPanelEntityFeature.ARM_AWAY | AlarmControlPanelEntityFeature.TRIGGER
+    )
+    _attr_code_trigger_required = False
     _attr_name = None  # use the device name
 
     def __init__(self, coordinator: TrustCoordinator, device) -> None:
@@ -125,3 +133,13 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+
+    async def async_alarm_trigger(self, code: str | None = None) -> None:
+        """Panic: the paired siren's panic function (Siren.panicButton, index 1 = 21)."""
+        siren = next(
+            (d for d in self.coordinator.devices.values() if d.device_type in ARC_SIREN),
+            None,
+        )
+        if siren is None:
+            raise HomeAssistantError("No security siren is paired with the hub")
+        await self.coordinator.async_send(siren, SIREN_PANIC_INDEX, SIREN_PANIC, optimistic=False)

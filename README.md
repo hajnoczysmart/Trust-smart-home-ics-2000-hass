@@ -63,8 +63,9 @@ sleep most of the time and ignore it, so they have no such button.
 - **Security siren (868 MHz):** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
   the real alarm; the app has no command to stop it, so the siren sounds for its configured
   duration. It is disabled by default (enable it in the entity settings if you need it).
-- **Panic alarm (868 MHz siren):** *Panic alarm* sets the siren to panic, the same command as the
-  app's panic button. It is disabled by default, so an accidental press cannot sound the siren.
+- **Panic alarm (868 MHz siren):** the alarm panel's *Trigger* button (Home Assistant's alarm card shows it)
+  sets the siren to panic, the same command as the app's panic button. The *Panic alarm* button on the
+  siren does the same and is disabled by default. It is disabled by default, so an accidental press cannot sound the siren.
   Home Assistant has no command to stop it; whether disarming the alarm stops it is not verified.
   This has not been tested on a real siren yet; please report what happens.
 - **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a
