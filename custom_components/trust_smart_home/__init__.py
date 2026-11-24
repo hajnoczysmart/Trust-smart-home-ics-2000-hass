@@ -14,7 +14,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from .api import TrustApiError, TrustAuthError, TrustClient
 from .catalog import TrustDevice, parse_sync
 from .const import CONF_HOME, DOMAIN, MANUFACTURER, PLATFORMS
-from .coordinator import TrustCoordinator
+from .coordinator import SECURITY_LAN_INTERVAL, TrustCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +91,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     entry.async_on_unload(coordinator.async_shutdown_timers)
+    # the security system is read on the LAN every second (when the hub answers)
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass, coordinator.async_security_tick, SECURITY_LAN_INTERVAL
+        )
+    )
 
     async def _refresh_hub_info(_now: object) -> None:
         await coordinator.async_refresh_hub_info()

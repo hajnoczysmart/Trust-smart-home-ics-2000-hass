@@ -112,6 +112,12 @@ async def async_get_config_entry_diagnostics(
         "cloud_request_ms": _summary(cloud_ms),
         "time_between_polls_ms": _summary(gaps),
     }
+    result["security_lan"] = {
+        "read_on_lan": sorted(coordinator.security_lan),
+        "cloud_only": sorted(coordinator.security_lan_bad),
+        "active": bool(coordinator.security_on_lan()),
+        "round_ms": _summary(list(coordinator.security_lan_ms)),
+    }
     if host:
         # Does the hub answer the security devices' statuses on the LAN, and
         # do they match the cloud? (Reading them there would be much faster.)

@@ -178,6 +178,17 @@ LED bulbs do not use power exactly in proportion to their brightness, and a plug
 consumption depends on what is plugged in. If Home Assistant or the cloud is unavailable
 for a while, at most 2 minutes of that gap is counted.
 
+## Security system on the LAN
+
+When the hub's address is known, the alarm module and the 868 MHz security devices (contact,
+motion and smoke sensors, siren, remote) are read from the hub every second, in a loop of
+their own that does not wait for the cloud. Measured on a real hub: the cloud took 6 s
+(median, up to 19 s) per status request, the hub answered each security device in about
+90 ms with the same values. This is independent of the option below. Each device's first
+answer must match the cloud's; a device that does not match stays on the cloud. When the
+hub does not answer three rounds in a row, the cloud takes over for a minute. The
+diagnostics file shows which devices are read on the LAN (`security_lan`).
+
 ## Statuses from the hub (experimental)
 
 > **Experimental, and not tested with every device type.** It has been measured on one hub
@@ -192,7 +203,7 @@ hub directly for part of the devices:
 - **Read from the hub:** lights, switches/plugs and Zigbee sensors. Their states are fresher
   (the cloud often reports an old value for a while after a command), and they keep working
   when the Trust cloud is unavailable.
-- **Always from the cloud:** covers (Somfy and other motors), the P1 energy module, the alarm,
+- **Always from the cloud:** covers (Somfy and other motors), the P1 energy module,
   rules and groups. The hub does not keep their states (it answers with zeros, or not at all).
 - **Checked first:** a device is only read from the hub after its first answer matches the
   cloud's (for example not all zeros where the cloud has a value). Devices that fail the check,

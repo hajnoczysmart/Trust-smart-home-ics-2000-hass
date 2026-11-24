@@ -51,6 +51,13 @@ ECHO_WINDOW = 60.0
 # Reading statuses from the hub on the LAN (experimental option):
 LOCAL_MISSES = 3  # unanswered requests in a row before a device goes back to the cloud
 LOCAL_RETRY = 60.0  # seconds before trying the hub again after a round without answers
+# The security system (alarm module, 868 MHz devices) read on the LAN in its own
+# fast loop: the cloud takes seconds (median ~6 s measured) per request, the hub
+# answers each device in ~90 ms with the same values (measured on a real hub).
+SECURITY_TYPES = {16, 17, 18, 19, 20, 240}
+SECURITY_LAN_INTERVAL = timedelta(seconds=1)
+SECURITY_LAN_MISSES = 3  # rounds without any answer before pausing (cloud takes over)
+SECURITY_LAN_RETRY = 60.0  # seconds before trying the LAN again after a pause
 STALE_GRACE = 30.0  # seconds a device keeps its last value while the cloud fails (then unavailable)
 
 _LOGGER = logging.getLogger(__name__)
@@ -114,6 +121,13 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         # take (ms) and when the polls started (monotonic seconds)
         self.cloud_poll_ms: deque[float] = deque(maxlen=60)
         self.poll_starts: deque[float] = deque(maxlen=60)
+        # security devices read on the LAN (see SECURITY_TYPES)
+        self.security_lan: set[int] = set()  # first answer matched the cloud
+        self.security_lan_bad: set[int] = set()  # answer did not match: cloud only
+        self._security_misses = 0
+        self._security_paused_until = 0.0
+        self._security_running = False
+        self.security_lan_ms: deque[float] = deque(maxlen=60)
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
@@ -198,7 +212,12 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         ids = self._poll_ids()
         order = self._local_candidates()
         in_order = set(order)
-        cloud_ids = [i for i in ids if i not in self.local_ok or i not in in_order]
+        on_lan = self.security_on_lan()
+        cloud_ids = [
+            i
+            for i in ids
+            if (i not in self.local_ok or i not in in_order) and i not in on_lan
+        ]
         local_job = (
             self.hass.async_add_executor_job(
                 self.client.get_statuses_local, order, self.local_address
@@ -274,8 +293,93 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             and now - self._last_seen.get(i, float("-inf")) >= STALE_GRACE
             and not (i in self.local_ok and self._local_misses.get(i, 0) < LOCAL_MISSES)
             and not self._follows_local(i)
+            and i not in on_lan
         }
         return {k: list(v) for k, v in self._statuses.items()}
+
+    # ---- security system on the LAN --------------------------------------
+
+    def security_on_lan(self) -> set[int]:
+        """Security devices currently read on the LAN (left out of the cloud poll)."""
+        if time.monotonic() < self._security_paused_until:
+            return set()
+        return set(self.security_lan)
+
+    async def async_security_tick(self, _now: Any = None) -> None:
+        """Read the alarm module and the 868 MHz devices from the hub.
+
+        Runs every second, independent of the (slow) cloud poll. A device's
+        first answer must match the cloud's before it is used; after
+        SECURITY_LAN_MISSES rounds without an answer the cloud takes over for
+        SECURITY_LAN_RETRY seconds."""
+        host = self.local_address
+        if not host or self._security_running:
+            return
+        if time.monotonic() < self._security_paused_until:
+            return
+        ids = [
+            d.id
+            for d in sorted(self.devices.values(), key=lambda d: d.id)
+            if d.kind == "module"
+            and d.device_type in SECURITY_TYPES
+            and d.id not in self.security_lan_bad
+            # checked against the cloud first, so wait for its first value
+            and (d.id in self.security_lan or d.id in self._reported)
+        ]
+        if not ids:
+            return
+        self._security_running = True
+        start = time.monotonic()
+        try:
+            got = await self.hass.async_add_executor_job(self._read_security, ids, host)
+        finally:
+            self._security_running = False
+        self.security_lan_ms.append((time.monotonic() - start) * 1000)
+        if not got:
+            self._security_misses += 1
+            if self._security_misses >= SECURITY_LAN_MISSES:
+                _LOGGER.debug(
+                    "The hub does not answer the security status on the LAN; cloud for %d s",
+                    SECURITY_LAN_RETRY,
+                )
+                self._security_misses = 0
+                self._security_paused_until = time.monotonic() + SECURITY_LAN_RETRY
+            return
+        self._security_misses = 0
+        use: dict[int, list[int]] = {}
+        for entity_id, status in got.items():
+            if entity_id not in self.security_lan:
+                if plausible_local_status(status, self._reported.get(entity_id)):
+                    self.security_lan.add(entity_id)
+                    _LOGGER.debug("Security device %s is read on the LAN", entity_id)
+                else:
+                    self.security_lan_bad.add(entity_id)
+                    _LOGGER.debug(
+                        "Security device %s: LAN %s differs from cloud %s; cloud only",
+                        entity_id, status, self._reported.get(entity_id),
+                    )
+                    continue
+            use[entity_id] = status
+        if not use:
+            return
+        now = time.monotonic()
+        for entity_id in use:
+            self._last_seen[entity_id] = now
+            self.stale_ids.discard(entity_id)
+        before = {i: self._statuses.get(i) for i in use}
+        self._merge(use)
+        if any(self._statuses.get(i) != before[i] for i in use):
+            # not async_set_updated_data: that would postpone the cloud poll
+            self.data = {k: list(v) for k, v in self._statuses.items()}
+            self.async_update_listeners()
+
+    def _read_security(self, ids: list[int], host: str) -> dict[int, list[int]]:
+        out: dict[int, list[int]] = {}
+        for entity_id in ids:
+            status = self.client.get_status_local(entity_id, host)
+            if status is not None:
+                out[entity_id] = status
+        return out
 
     def _timed_get_statuses(self, entity_ids: list[int]) -> dict[int, list[int]]:
         """The cloud status request, timed (runs in the executor)."""
