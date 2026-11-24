@@ -180,8 +180,9 @@ for a while, at most 2 minutes of that gap is counted.
 
 ## Security system on the LAN
 
-When the hub's address is known, the alarm module and the 868 MHz security devices (contact,
-motion and smoke sensors, siren, remote) are read from the hub every second, in a loop of
+When the hub's address is known, the alarm module, the 868 MHz security devices (contact,
+motion and smoke sensors, siren, remote) and the Zigbee safety sensors (smoke, CO, leakage,
+FireAngel) are read from the hub every second, in a loop of
 their own that does not wait for the cloud. Measured on a real hub: the cloud took 6 s
 (median, up to 19 s) per status request, the hub answered each security device in about
 90 ms with the same values. This is independent of the option below. Each device's first

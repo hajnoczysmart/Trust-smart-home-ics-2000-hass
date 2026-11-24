@@ -54,7 +54,9 @@ LOCAL_RETRY = 60.0  # seconds before trying the hub again after a round without 
 # The security system (alarm module, 868 MHz devices) read on the LAN in its own
 # fast loop: the cloud takes seconds (median ~6 s measured) per request, the hub
 # answers each device in ~90 ms with the same values (measured on a real hub).
-SECURITY_TYPES = {16, 17, 18, 19, 20, 240}
+# Zigbee safety sensors (leakage 42, smoke 43, CO 47, FireAngel 49) too: they
+# answer on the LAN with the cloud's values (measured, #2) and are cloud-slow otherwise
+SECURITY_TYPES = {16, 17, 18, 19, 20, 240, 42, 43, 47, 49}
 SECURITY_LAN_INTERVAL = timedelta(seconds=1)
 SECURITY_LAN_MISSES = 3  # rounds without any answer before pausing (cloud takes over)
 SECURITY_LAN_RETRY = 60.0  # seconds before trying the LAN again after a pause
@@ -64,7 +66,10 @@ SECURITY_QUIET_AFTER_COMMAND = 2.0
 # A busy hub (e.g. arming the sensors by radio at the end of the walkout) is
 # asked again next second instead of retried for long: it is not "unreachable"
 SECURITY_BUSY_RETRIES = 4
-STALE_GRACE = 30.0  # seconds a device keeps its last value while the cloud fails (then unavailable)
+# seconds a device keeps its last value while the cloud fails (then unavailable);
+# the cloud often fails or takes 15-38 s between answers (measured), so 30 s made
+# cloud-only devices flicker to unavailable every few minutes
+STALE_GRACE = 300.0
 
 _LOGGER = logging.getLogger(__name__)
 

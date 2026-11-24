@@ -16,8 +16,7 @@ from homeassistant.const import CONF_EMAIL, CONF_IP_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_ALARM_CODE, CONF_HOME, DOMAIN
-
-SECURITY_TYPES = {16, 17, 18, 19, 20, 240}  # 868 MHz security devices, alarm module
+from .coordinator import SECURITY_TYPES  # security system and Zigbee safety sensors
 
 
 def _summary(values: list[float]) -> dict[str, Any]:
