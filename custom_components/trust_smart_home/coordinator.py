@@ -614,9 +614,13 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             else []
         )
         online = [m for m in dev.members if member_online(self._statuses.get(m))]
+        # Brightness and colour only from members that are on: members that are
+        # off (or unpowered) report 0 for both (measured), which must not move
+        # the group. The on/off state itself is any member on.
+        lit = [m for m in online if status_value(self._statuses.get(m), on_index) == 1]
         # the colour is one setting (pointer + the value it points to): take all
         # of it from the member that changed last, never mix members
-        colour_movers = [m for m in online if any((m, i) in changed for i in colour)]
+        colour_movers = [m for m in lit if any((m, i) in changed for i in colour)]
         if colour_movers:
             source = self._statuses.get(colour_movers[-1])
             for index in colour:
@@ -626,8 +630,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         for index in [on_index, *others]:
             if index in colour:
                 continue
-            # offline members report zeros: they do not move the group
-            movers = [m for m in online if (m, index) in changed]
+            # members that are off or offline report zeros: they do not move the group
+            movers = [m for m in (dev.members if index == on_index else lit) if (m, index) in changed]
             if not movers:
                 continue
             if index == on_index:

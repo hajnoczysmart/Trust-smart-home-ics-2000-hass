@@ -683,7 +683,11 @@ def derive_group_status(
     if not known:
         return own
     result[on_index] = 1 if any(v == 1 for v in known) else 0
-    lit = [m for m in statuses if status_value(m, on_index) == 1] or statuses
+    lit = [m for m in statuses if status_value(m, on_index) == 1]
+    if not lit:
+        # all off: keep the group's own brightness and colour (members that
+        # are off report 0 for both), only the on/off state follows them
+        return result
     light = desc.light
     for index in others:
         values = [v for v in (status_value(m, index) for m in lit) if v is not None]

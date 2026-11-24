@@ -240,8 +240,9 @@ temperature); the *colour pointer* tells which one is current, and the integrati
 it the way the app does: 8 hue/saturation, 5 xy, 9 colour temperature, anything else warm
 white. Measured on a real hub: after a colour temperature command, RGB lights report the
 mired value in the xy slot (index 5) with pointer 5; this is shown as colour temperature.
-A group takes its whole colour from the member that changed last, and members that are
-offline (unpowered) do not change the group's brightness or colour.
+A group takes its whole colour from the member that changed last, and only members that
+are on change the group's brightness and colour: members that are off or unpowered report
+0 for both (measured).
 
 ## Light effects
 
