@@ -580,6 +580,9 @@ def describe(dev: TrustDevice, member_functions: set[int] | None = None) -> Desc
             # Siren.activateAlarm(): index 3 = 36, the real alarm; the app has no
             # stop action, so it is disabled by default
             ButtonSpec("siren_alarm", 3, 36, enabled_default=False),
+            # Siren.panicButton: index 1 = 21 (VALUE_PANIC), the panic alarm. Disabled
+            # by default so that an accidental press cannot sound the siren.
+            ButtonSpec("siren_panic", 1, 21, enabled_default=False),
         ]
     elif t in REMOTE_CHANNELS:
         _remote(REMOTE_CHANNELS[t], d)

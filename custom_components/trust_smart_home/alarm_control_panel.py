@@ -1,14 +1,18 @@
 """The ICS-2000 security system (alarm module, device type 240)."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
     AlarmControlPanelState,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from .catalog import (
     ALARM_ARM,
@@ -17,7 +21,7 @@ from .catalog import (
     ALARM_STATE_INDEX,
     SECURITY_STATES,
 )
-from .const import DOMAIN
+from .const import DOMAIN, WALKOUT_SECONDS
 from .coordinator import TrustCoordinator
 from .entity import TrustEntity
 
@@ -42,8 +46,17 @@ async def async_setup_entry(
     )
 
 
+WALKOUT_STATES = ("pre_walkout", "walkout")
+
+
 class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
-    """Arms/disarms exactly like the app (function 15, value 38 / 39)."""
+    """Arms/disarms exactly like the app (function 15, value 38 / 39).
+
+    The alarm is read from the cloud only. A failed cloud poll keeps the last
+    known state instead of making the alarm unavailable; the attribute
+    `cloud_stale` tells when that state is older than the last poll.
+    During the walkout the entity counts down an estimate of the time left.
+    """
 
     _attr_code_arm_required = False
     _attr_supported_features = AlarmControlPanelEntityFeature.ARM_AWAY
@@ -51,6 +64,7 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     def __init__(self, coordinator: TrustCoordinator, device) -> None:
         super().__init__(coordinator, device, "alarm")
+        self._walkout_started = None  # when the walkout was first seen
 
     @property
     def _security_state(self) -> str | None:
@@ -58,12 +72,53 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
         return SECURITY_STATES.get(raw) if raw is not None else None
 
     @property
+    def available(self) -> bool:
+        # Keep the last known state through a failed cloud poll (the coordinator
+        # keeps the values); unavailable only when there was never a status.
+        return self.coordinator.last_update_success and self.status is not None
+
+    @property
     def alarm_state(self) -> AlarmControlPanelState | None:
         return _STATE_MAP.get(self._security_state or "")
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | None]:
-        return {"trust_state": self._security_state}
+    def walkout_remaining(self) -> int | None:
+        """Estimated seconds left before the alarm is armed, None outside a walkout."""
+        if self._walkout_started is None:
+            return None
+        elapsed = (dt_util.utcnow() - self._walkout_started).total_seconds()
+        return max(0, round(WALKOUT_SECONDS - elapsed))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | int | bool | None]:
+        return {
+            "trust_state": self._security_state,
+            "walkout_remaining": self.walkout_remaining,
+            "cloud_stale": self.trust.id in self.coordinator.stale_ids,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # Refresh the countdown every second while the walkout runs
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._tick_walkout, timedelta(seconds=1)
+            )
+        )
+
+    @callback
+    def _tick_walkout(self, _now) -> None:
+        if self._walkout_started is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if self._security_state in WALKOUT_STATES:
+            if self._walkout_started is None:
+                self._walkout_started = dt_util.utcnow()
+        else:
+            self._walkout_started = None
+        super()._handle_coordinator_update()
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         await self.send(ALARM_COMMAND_INDEX, ALARM_ARM)

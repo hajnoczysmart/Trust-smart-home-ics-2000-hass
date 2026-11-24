@@ -22,6 +22,9 @@ DEFAULT_SCAN_INTERVAL = 3
 MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 60
 REFRESH_AFTER_COMMAND = 2.0  # seconds
+# The alarm walkout (time to leave after arming). The hub reports the state but not
+# its length, so Home Assistant counts down from this estimate (see alarm_control_panel).
+WALKOUT_SECONDS = 85  # the walkout time configured in the app (confirmed by the user)
 
 # Fired on the event bus for every button press (used by device triggers)
 EVENT_PRESS = f"{DOMAIN}_press"

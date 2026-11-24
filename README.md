@@ -44,9 +44,9 @@ cleanest way is to delete the old integration entry and add it again.
 | 433 MHz chime | `button` (ring) |
 | 433 MHz remotes and wall switches | per channel: `binary_sensor` (last button pressed), `event` on button press, `button` to transmit as the remote |
 | Security system remote, 868 MHz | `event` (arm / disarm), low battery |
-| Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button and *Sound alarm* button (disabled by default) |
+| Security system devices, 868 MHz: contact, motion, smoke, siren | `binary_sensor` + tamper, low battery, connectivity; siren: *Test signal* button, *Sound alarm* and *Panic alarm* buttons (both disabled by default) |
 | Zigbee sensors: multi-purpose, leakage, smoke, CO, FireAngel, temperature/humidity | `binary_sensor` (alarm according to the zone type, tamper, occupancy) and `sensor` (temperature, humidity, battery) |
-| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered) |
+| ICS-2000 alarm system | `alarm_control_panel`: arm, disarm, state (arming / armed / triggered); attributes `walkout_remaining` (estimated countdown while arming) and `cloud_stale` |
 | P1 energy module | `sensor`: current consumption/production (W), energy consumed/produced (kWh, low/high tariff), gas and water (m³), tariff |
 | Scenes from the app | `scene` (activate) |
 | Rules (automations) from the app | `switch` to enable/disable, `button` to run now; on a shared *Rules* device |
@@ -63,6 +63,10 @@ sleep most of the time and ignore it, so they have no such button.
 - **Security siren (868 MHz):** *Test signal* sends the short "arm error" signal. *Sound alarm* triggers
   the real alarm; the app has no command to stop it, so the siren sounds for its configured
   duration. It is disabled by default (enable it in the entity settings if you need it).
+- **Panic alarm (868 MHz siren):** *Panic alarm* sets the siren to panic, the same command as the
+  app's panic button. It is disabled by default, so an accidental press cannot sound the siren.
+  Home Assistant has no command to stop it; whether disarming the alarm stops it is not verified.
+  This has not been tested on a real siren yet; please report what happens.
 - **Smoke detectors:** use the test button on the detector itself (the app cannot trigger a
   test either). The detector sounds, and within a few seconds its *Smoke* sensor in Home
   Assistant turns on, which tests the whole chain.
@@ -227,6 +231,11 @@ numeric sensor. Trigger the device, reopen the dialog, and you will see which nu
   (brightness and white can). The app's own bulbs also advertise HS.
 - **Alarm "home" mode:** the ICS-2000 alarm has a single armed state, shown in Home Assistant
   as "armed away".
+- **Alarm countdown:** the hub reports the walkout state but not how long it lasts, as far as
+  known. While arming, `walkout_remaining` counts down from the 85-second walkout time set in the app, and the
+  countdown starts when Home Assistant first sees the walkout, so with a long scan interval it
+  starts late. The alarm stays available through a failed cloud poll and `cloud_stale` shows
+  when its state may be older than the last poll.
 - **Wi-Fi cameras and Wi-Fi devices:** they do not use the ICS-2000 protocol.
 - **New devices:** the device list is read at startup. After adding a device in the app,
   reload the integration.
