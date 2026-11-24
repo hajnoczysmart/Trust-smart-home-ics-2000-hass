@@ -20,6 +20,7 @@ from homeassistant.util import dt as dt_util
 
 from .catalog import (
     ALARM_ARM,
+    ARC_CONTACT,
     ARC_SIREN,
     ALARM_COMMAND_INDEX,
     ALARM_DISARM,
@@ -89,6 +90,14 @@ async def async_calm(coordinator: TrustCoordinator) -> None:
 
 
 WALKOUT_STATES = ("pre_walkout", "walkout")
+ARMING_OR_ARMED = ("pre_walkout", "walkout", "armed")
+# The hub's arm rule only starts from a disarmed state, on a change of the
+# module's command (function 15) to arm. After an arm error, or after the
+# remote disarmed the system (function 15 stays at arm), arming needs a disarm
+# first. Wait this long after it so the hub's disarm rule has finished.
+ARM_PREPARE_WAIT = 2.0
+CONTACT_OPEN_INDEX = 1  # 868 MHz ContactSensor: index 1 = 22 opened, 23 closed
+CONTACT_OPEN = 22
 
 
 class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
@@ -97,6 +106,7 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
     The alarm is read from the cloud only. A failed cloud poll keeps the last
     known state instead of making the alarm unavailable; the attribute
     `cloud_stale` tells when that state is older than the last poll.
+    `open_contacts` lists the open security contact sensors (they block arming).
     During the walkout the entity counts down an estimate of the time left.
     """
 
@@ -167,7 +177,21 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
             "trust_state": self._security_state,
             "walkout_remaining": self.walkout_remaining,
             "cloud_stale": self.trust.id in self.coordinator.stale_ids,
+            "open_contacts": self.open_contacts,
         }
+
+    @property
+    def open_contacts(self) -> list[str]:
+        """Names of the security contact sensors that are open: arming fails
+        (arm error) while any of them is open."""
+        return sorted(
+            dev.name
+            for dev in self.coordinator.devices.values()
+            if dev.device_type in ARC_CONTACT
+            and (status := self.coordinator.status(dev.id)) is not None
+            and len(status) > CONTACT_OPEN_INDEX
+            and status[CONTACT_OPEN_INDEX] == CONTACT_OPEN
+        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -194,6 +218,14 @@ class TrustAlarm(TrustEntity, AlarmControlPanelEntity):
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         self._check_code(code)
+        state = self._security_state
+        if state in ARMING_OR_ARMED:
+            return  # already arming or armed
+        if state != "disarmed" or self.value(ALARM_COMMAND_INDEX) != ALARM_DISARM:
+            # arm error, alarm, unknown, or function 15 still at arm (remote
+            # disarm): the hub's arm rule would not start, so disarm first
+            await self.send(ALARM_COMMAND_INDEX, ALARM_DISARM)
+            await asyncio.sleep(ARM_PREPARE_WAIT)
         await self.send(ALARM_COMMAND_INDEX, ALARM_ARM)
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
