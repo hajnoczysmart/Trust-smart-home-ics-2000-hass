@@ -53,7 +53,7 @@ SIREN_PANIC_INDEX = 1
 SIREN_PANIC = 21  # SecurityDevice.VALUE_PANIC
 
 CALM_REPEATS = 5  # the app's "calm" (panic off) sends disarm this many times
-CALM_INTERVAL = 1.0  # seconds between the repeats
+CALM_INTERVAL = 0.5  # seconds between the repeats
 
 
 def find_siren(coordinator: TrustCoordinator):

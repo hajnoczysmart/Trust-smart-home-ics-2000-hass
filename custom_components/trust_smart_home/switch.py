@@ -102,14 +102,15 @@ class TrustPanicSwitch(TrustEntity, SwitchEntity):
         return self._on
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await async_panic(self.coordinator)
         self._on = True
         self.async_write_ha_state()
+        await async_panic(self.coordinator)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await async_calm(self.coordinator)
+        # Show the new state at once; the repeated disarm takes a few seconds
         self._on = False
         self.async_write_ha_state()
+        await async_calm(self.coordinator)
 
 
 class TrustSwitch(TrustEntity, SwitchEntity):
