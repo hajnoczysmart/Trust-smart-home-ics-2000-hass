@@ -51,6 +51,7 @@ ECHO_WINDOW = 60.0
 # Reading statuses from the hub on the LAN (experimental option):
 LOCAL_MISSES = 3  # unanswered requests in a row before a device goes back to the cloud
 LOCAL_RETRY = 60.0  # seconds before trying the hub again after a round without answers
+STALE_GRACE = 30.0  # seconds a device keeps its last value while the cloud fails (then unavailable)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         # devices whose state could not be refreshed because the cloud failed
         # while the hub answered on the LAN: shown as unavailable
         self.stale_ids: set[int] = set()
+        # when each device last got a fresh value (cloud or hub), monotonic seconds
+        self._last_seen: dict[int, float] = {}
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
         # (entity id, index) -> (value sent, expiry): event entities do not report
@@ -242,14 +245,19 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
                     except TrustApiError as err:
                         cloud_error = err
 
+        now = time.monotonic()
+        for entity_id in fresh:
+            self._last_seen[entity_id] = now
         if cloud_error is None:
             self.stale_ids = set()
             self._merge(fresh)
             return {k: list(v) for k, v in self._statuses.items()}
 
         # The cloud failed. Keep the last known values; devices that are not
-        # refreshed (neither from the cloud nor from the hub) are unavailable,
-        # except those read on the LAN that have missed fewer than LOCAL_MISSES polls.
+        # refreshed (neither from the cloud nor from the hub) become unavailable
+        # only after STALE_GRACE seconds without a fresh value: a slow or failed
+        # cloud poll is brief, and security sensors and the alarm are cloud-only.
+        # Devices read on the LAN keep their value through LOCAL_MISSES polls.
         _LOGGER.debug("Cloud unavailable (%s)", cloud_error)
         self._merge(fresh)
         if not self._statuses:
@@ -258,6 +266,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             i
             for i in ids
             if i not in fresh
+            and now - self._last_seen.get(i, float("-inf")) >= STALE_GRACE
             and not (i in self.local_ok and self._local_misses.get(i, 0) < LOCAL_MISSES)
             and not self._follows_local(i)
         }
