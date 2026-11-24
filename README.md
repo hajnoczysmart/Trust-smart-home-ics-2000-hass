@@ -203,8 +203,10 @@ Configure → *Settings* → *Read lights, switches and Zigbee sensors from the 
 (off by default). The app itself always reads states from the Trust cloud; with this option
 these devices join the LAN loop of the security system (see above):
 
-- **Read from the hub:** lights, switches/plugs and Zigbee sensors. After the security
-  system, 4 of them are read each second, in turn (with 16 lights each one about every 4 s),
+- **Read from the hub:** lights, switches/plugs and Zigbee sensors. Each second the alarm
+  module and the sensors that trigger it are read, then 3 of the rest (siren, remote, lights)
+  in turn (with 16 lights each one about every 6 s; the hub answers only about 10 requests
+  a second, and a fully busy hub delays commands),
   without waiting for the cloud, which took 6-28 s per request on a real hub. Their states
   are fresher (the cloud often reports an old value for a while after a command), and they
   keep working when the Trust cloud is unavailable. Groups follow their members.

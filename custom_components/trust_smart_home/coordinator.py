@@ -68,7 +68,12 @@ SECURITY_QUIET_AFTER_COMMAND = 2.0
 SECURITY_BUSY_RETRIES = 4
 # With the LAN option on, this many lights/switches/Zigbee sensors are read per
 # round after the security system, in turn (16 lights: each every 4 s)
-LIGHTS_PER_ROUND = 4
+# The hub answers about 10 status requests a second at most, and a fully busy
+# hub delays commands (measured: 11 requests per round made rounds of 1-4 s).
+# Every round: the alarm module and the sensors that trigger it; then
+# SLOW_PER_ROUND of the rest (siren, remote and, with the option, lights), in turn.
+FAST_TYPES = {240, 17, 18, 19, 42, 43, 47, 49}
+SLOW_PER_ROUND = 3
 # seconds a device keeps its last value while the cloud fails (then unavailable);
 # the cloud often fails or takes 15-38 s between answers (measured), so 30 s made
 # cloud-only devices flicker to unavailable every few minutes
@@ -341,8 +346,8 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             return
         if time.monotonic() < self._security_paused_until:
             return
-        ids = [
-            d.id
+        security = [
+            d
             # the alarm module first: its state matters most
             for d in sorted(
                 self.devices.values(), key=lambda d: (d.device_type != 240, d.id)
@@ -353,11 +358,13 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             # checked against the cloud first, so wait for its first value
             and (d.id in self.security_lan or d.id in self._reported)
         ]
-        # then a few lights/switches/sensors per round, in turn (option on)
-        lights = self._lights_on_lan()
-        if lights:
-            start = self._light_next % len(lights)
-            batch = (lights[start:] + lights[:start])[:LIGHTS_PER_ROUND]
+        ids = [d.id for d in security if d.device_type in FAST_TYPES]
+        # then a few of the rest per round, in turn
+        slow = [d.id for d in security if d.device_type not in FAST_TYPES]
+        slow += self._lights_on_lan()
+        if slow:
+            start = self._light_next % len(slow)
+            batch = (slow[start:] + slow[:start])[:SLOW_PER_ROUND]
             self._light_next = start + len(batch)
             ids += batch
         if not ids:
