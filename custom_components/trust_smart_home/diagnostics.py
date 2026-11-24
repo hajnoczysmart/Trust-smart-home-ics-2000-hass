@@ -116,6 +116,7 @@ async def async_get_config_entry_diagnostics(
         "read_on_lan": sorted(coordinator.security_lan),
         "cloud_only": sorted(coordinator.security_lan_bad),
         "active": bool(coordinator.security_on_lan()),
+        "busy_rounds": coordinator.security_busy_rounds,
         "round_ms": _summary(list(coordinator.security_lan_ms)),
     }
     if host:

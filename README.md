@@ -186,7 +186,9 @@ their own that does not wait for the cloud. Measured on a real hub: the cloud to
 (median, up to 19 s) per status request, the hub answered each security device in about
 90 ms with the same values. This is independent of the option below. Each device's first
 answer must match the cloud's; a device that does not match stays on the cloud. When the
-hub does not answer three rounds in a row, the cloud takes over for a minute. Commands go first: the loop pauses while a command is sent and for 2 s after it, and a command waits up to about 3 s for a busy hub before it goes through the cloud. The
+hub does not answer at all three rounds in a row, the cloud takes over for a minute; a hub
+that answers *busy* (for example while it arms the sensors by radio at the end of the walkout)
+is simply asked again the next second. The alarm module is read first in each round. Commands go first: the loop pauses while a command is sent and for 2 s after it, and a command waits up to about 3 s for a busy hub before it goes through the cloud. The
 diagnostics file shows which devices are read on the LAN (`security_lan`).
 
 ## Statuses from the hub (experimental)

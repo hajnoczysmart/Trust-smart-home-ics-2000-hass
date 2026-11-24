@@ -534,6 +534,14 @@ class TrustClient:
         {"module": {"id": ..., "functions": [...]}} (type 128). The answer is
         acknowledged by _exchange, so the next request is answered at once.
         """
+        return self.read_status_local(entity_id, local_address)[0]
+
+    def read_status_local(
+        self, entity_id: int, local_address: str, busy_retries: int = BUSY_RETRIES
+    ) -> tuple[list[int] | None, bool]:
+        """A device's function values from the hub, and whether the hub replied
+        at all: (None, True) means it answered, but busy or without a status;
+        (None, False) means no reply (unreachable)."""
         frame = build_frame(
             self.mac or "",
             entity_id,
@@ -542,17 +550,24 @@ class TrustClient:
         )
         try:
             raw = self._exchange(
-                frame, local_address, expect_data=True, timeout=STATUS_TIMEOUT
+                frame,
+                local_address,
+                expect_data=True,
+                timeout=STATUS_TIMEOUT,
+                busy_retries=busy_retries,
             )
+        except OSError:
+            return None, False
+        try:
             msg_type, _versions, text, _code = parse_reply(raw, self.aes_key or "")
-        except (OSError, ValueError):
-            return None
+        except ValueError:
+            return None, True
         if msg_type in (MSG_NOT_ACKNOWLEDGE, MSG_ACKNOWLEDGE):
-            return None
+            return None, True
         functions = _find_key(_loads(text), "functions")
         if not isinstance(functions, list):
-            return None
-        return [_as_int(v) for v in functions[:256]]
+            return None, True
+        return [_as_int(v) for v in functions[:256]], True
 
     def get_statuses_local(
         self, entity_ids: list[int], local_address: str, budget: float = LOCAL_STATUS_BUDGET

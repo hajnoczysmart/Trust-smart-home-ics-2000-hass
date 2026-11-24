@@ -61,6 +61,9 @@ SECURITY_LAN_RETRY = 60.0  # seconds before trying the LAN again after a pause
 # Commands go first: the loop stops while one is sent and stays quiet a moment
 # after it, while the hub runs its rules (e.g. arming the sensors)
 SECURITY_QUIET_AFTER_COMMAND = 2.0
+# A busy hub (e.g. arming the sensors by radio at the end of the walkout) is
+# asked again next second instead of retried for long: it is not "unreachable"
+SECURITY_BUSY_RETRIES = 4
 STALE_GRACE = 30.0  # seconds a device keeps its last value while the cloud fails (then unavailable)
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,6 +135,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._security_running = False
         self._commands_in_flight = 0
         self._security_quiet_until = 0.0
+        self.security_busy_rounds = 0  # rounds in which the hub only said busy
         self.security_lan_ms: deque[float] = deque(maxlen=60)
         # Hub address found on the LAN at start-up when none is configured
         self.discovered_address: str | None = None
@@ -326,7 +330,10 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             return
         ids = [
             d.id
-            for d in sorted(self.devices.values(), key=lambda d: d.id)
+            # the alarm module first: its state matters most
+            for d in sorted(
+                self.devices.values(), key=lambda d: (d.device_type != 240, d.id)
+            )
             if d.kind == "module"
             and d.device_type in SECURITY_TYPES
             and d.id not in self.security_lan_bad
@@ -338,10 +345,15 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         self._security_running = True
         start = time.monotonic()
         try:
-            got = await self.hass.async_add_executor_job(self._read_security, ids, host)
+            got, replied = await self.hass.async_add_executor_job(
+                self._read_security, ids, host
+            )
         finally:
             self._security_running = False
         self.security_lan_ms.append((time.monotonic() - start) * 1000)
+        if not got and replied:
+            self.security_busy_rounds += 1
+            return  # the hub is there but busy: just ask again next second
         if not got:
             self._security_misses += 1
             if self._security_misses >= SECURITY_LAN_MISSES:
@@ -380,15 +392,24 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self.data = {k: list(v) for k, v in self._statuses.items()}
             self.async_update_listeners()
 
-    def _read_security(self, ids: list[int], host: str) -> dict[int, list[int]]:
+    def _read_security(
+        self, ids: list[int], host: str
+    ) -> tuple[dict[int, list[int]], bool]:
+        """Statuses read this round, and whether the hub replied at all."""
         out: dict[int, list[int]] = {}
+        replied = False
         for entity_id in ids:
             if self._commands_in_flight:
                 break  # a command is waiting for the LAN: let it go first
-            status = self.client.get_status_local(entity_id, host)
+            status, answered = self.client.read_status_local(
+                entity_id, host, busy_retries=SECURITY_BUSY_RETRIES
+            )
+            replied = replied or answered
             if status is not None:
                 out[entity_id] = status
-        return out
+            elif answered:
+                break  # busy: the rest next second, do not hold the hub up
+        return out, replied
 
     def _timed_get_statuses(self, entity_ids: list[int]) -> dict[int, list[int]]:
         """The cloud status request, timed (runs in the executor)."""
