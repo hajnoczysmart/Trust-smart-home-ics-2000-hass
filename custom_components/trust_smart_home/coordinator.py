@@ -78,6 +78,9 @@ SLOW_PER_ROUND = 3
 # the cloud often fails or takes 15-38 s between answers (measured), so 30 s made
 # cloud-only devices flicker to unavailable every few minutes
 STALE_GRACE = 300.0
+# After our own command, a value read on the LAN may still be the old one for a
+# moment; within this many seconds only changes are applied, as for the cloud
+LAN_TRUST_DELAY = 5.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -413,7 +416,7 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self._last_seen[entity_id] = now
             self.stale_ids.discard(entity_id)
         before = {i: self._statuses.get(i) for i in use}
-        self._merge(use)
+        self._merge(use, authoritative=True)
         if any(self._statuses.get(i) != before[i] for i in use):
             # not async_set_updated_data: that would postpone the cloud poll
             self.data = {k: list(v) for k, v in self._statuses.items()}
@@ -519,8 +522,14 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             self.local_ok.discard(entity_id)
             _LOGGER.debug("Device %s stopped answering on the LAN; checking it again later", entity_id)
 
-    def _merge(self, fresh: dict[int, list[int]]) -> None:
-        """Apply what the cloud reports, but only the values that changed."""
+    def _merge(self, fresh: dict[int, list[int]], authoritative: bool = False) -> None:
+        """Apply what the cloud reports, but only the values that changed.
+
+        ``authoritative`` (values read from the hub on the LAN, which are current):
+        also correct a shown value that differs from the hub's, unless we sent a
+        command for it in the last LAN_TRUST_DELAY seconds. Otherwise a value we
+        set ourselves (e.g. the colour pointer after a colour command) could stay
+        shown although the hub never changed it, because only changes are applied."""
         changed: set[tuple[int, int]] = set()
         first: set[int] = set()
         for eid, new in fresh.items():
@@ -533,8 +542,10 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
             else:
                 shown = list(shown)
                 for i, value in enumerate(new):
-                    if i >= len(old) or value != old[i]:
-                        if self._is_late_echo(eid, i, value):
+                    differs = i >= len(shown) or shown[i] != value
+                    correct = authoritative and differs and not self._recently_sent(eid, i)
+                    if i >= len(old) or value != old[i] or correct:
+                        if not correct and self._is_late_echo(eid, i, value):
                             continue
                         if i >= len(shown):
                             shown.extend([0] * (i + 1 - len(shown)))
@@ -599,6 +610,10 @@ class TrustCoordinator(DataUpdateCoordinator[dict[int, list[int]]]):
         if value == latest or time.monotonic() - sent_at > ECHO_WINDOW:
             return False  # the newest command confirmed, or no command of ours lately
         return any(sent == value for sent, _t in history)
+
+    def _recently_sent(self, eid: int, index: int) -> bool:
+        history = self._sent.get((eid, index))
+        return bool(history) and time.monotonic() - history[-1][1] < LAN_TRUST_DELAY
 
     def _remember_sent(self, eid: int, index: int, value: int) -> None:
         history = self._sent.setdefault((eid, index), deque(maxlen=128))

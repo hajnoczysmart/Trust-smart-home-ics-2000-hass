@@ -209,7 +209,9 @@ these devices join the LAN loop of the security system (see above):
   a second, and a fully busy hub delays commands),
   without waiting for the cloud, which took 6-28 s per request on a real hub. Their states
   are fresher (the cloud often reports an old value for a while after a command), and they
-  keep working when the Trust cloud is unavailable. Groups follow their members.
+  keep working when the Trust cloud is unavailable. Groups follow their members. A value read on
+  the hub also corrects what Home Assistant shows (for example the colour mode), except
+  for 5 s after a command of ours, while the hub may still report the old value.
 - **Always from the cloud:** covers (Somfy and other motors), the P1 energy module and
   rules. The hub does not keep their states (it answers with zeros, or not at all).
 - **Checked first:** a device is only read from the hub after its first answer matches the
